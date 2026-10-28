@@ -189,7 +189,7 @@ main { display: block; margin-top: 20px; outline: none; min-width: 0; }
 .form-card { padding: 20px 16px; }
 .field { display: grid; gap: 6px; margin-bottom: 16px; min-width: 0; }
 .field label { font-weight: 600; font-size: 14px; }
-input[type="text"], input[type="date"], input[type="file"], select { width: 100%; min-width: 0; min-height: 46px; padding: 10px 12px; font-size: 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); }
+input[type="text"], input[type="email"], input[type="password"], input[type="date"], input[type="file"], select { width: 100%; min-width: 0; min-height: 46px; padding: 10px 12px; font-size: 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); }
 input[type="file"] { padding: 8px; }
 input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .err { color: var(--neg); font-size: 14px; font-weight: 600; min-height: 0; }
@@ -252,6 +252,31 @@ input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); ou
 .tbl tbody th { font-weight: 600; }
 .trend-stack { display: grid; gap: 16px; }
 
+/* sign-in, lock */
+.gate { max-width: 440px; margin: 8px auto 0; }
+.gate .card { padding: 24px 20px; }
+.gate h2 { font-size: 24px; font-weight: 700; margin-bottom: 6px; }
+.gate .lead { color: var(--muted); margin-bottom: 18px; }
+.gate .btn { width: 100%; }
+.gate .btn + .btn { margin-top: 10px; }
+.gate .alt { margin-top: 18px; display: grid; gap: 10px; justify-items: start; font-size: 15px; }
+.form-msg { margin-bottom: 14px; padding: 10px 12px; border-radius: 8px; font-size: 15px; font-weight: 600; background: var(--neg-soft); color: var(--neg); }
+.form-msg.ok { background: var(--accent-soft); color: var(--ink); }
+.pw-wrap { position: relative; }
+.pw-wrap input { padding-right: 72px; }
+.pw-wrap .link { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); font-size: 14px; }
+.lock-icon { width: 56px; height: 56px; border-radius: 14px; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; margin-bottom: 14px; }
+.check { display: flex; gap: 10px; align-items: center; font-weight: 600; margin-bottom: 12px; }
+.check input { width: 22px; height: 22px; accent-color: var(--accent); }
+.acct { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.acct strong { overflow-wrap: anywhere; }
+.export-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 12px; }
+.export-item { display: grid; grid-template-rows: auto 1fr auto; gap: 6px; }
+.export-item .btn { justify-self: start; min-width: 180px; }
+.export-item h3 { font-size: 17px; margin: 0; }
+.export-item p { color: var(--muted); font-size: 14px; margin: 0 0 6px; }
+.range-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 0 12px; }
+
 /* loading */
 .loading { display: grid; gap: 12px; }
 .sk { height: 14px; border-radius: 7px; background: var(--rule); }
@@ -274,12 +299,14 @@ input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); ou
     <button type="button" role="tab" data-tab="journal" aria-selected="false">Expenses</button>
     <button type="button" role="tab" data-tab="income" aria-selected="false">Income</button>
     <button type="button" role="tab" data-tab="budgets" aria-selected="false">Budgets</button>
+    <button type="button" role="tab" data-tab="export" aria-selected="false">Export</button>
     <button type="button" role="tab" data-tab="settings" aria-selected="false">Settings</button>
   </nav>
   <div id="status" class="status" role="status" aria-live="polite"></div>
   <main id="main" role="tabpanel" tabindex="-1"></main>
 </div>
 <noscript>This app needs JavaScript.</noscript>
+<script src="firebase-config.js"></script>
 
 <script>
 (function () {
@@ -308,7 +335,18 @@ input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); ou
   let lsOk = true;
   let lsWarned = false;
   let toastTimer = null;
-  const ui = { tab: 'overview', editor: null, jPeriod: 'month', jCat: '', trendMonths: 6 };
+  const ui = { tab: 'overview', editor: null, jPeriod: 'month', jCat: '', trendMonths: 6, xPeriod: 'month', xFrom: '', xTo: '' };
+
+  // account + lock state
+  const FB = window.CASHBOOK_FIREBASE || {};
+  const cloudConfigured = !!(FB.apiKey && FB.projectId && FB.appId);
+  let gate = 'boot';          // 'boot' | 'signin' | 'signup' | 'reset' | 'lock' | 'offer' | 'app'
+  let gateMsg = null;         // { text, ok }
+  let auth = null, db = null, user = null, unsub = null;
+  let syncState = 'ok';       // 'ok' | 'pending' | 'offline'
+  let hiddenAt = 0;
+  let unlockBusy = false;
+  const LOCK_PREFIX = 'cashbook.lock.';
   const fmts = {};
 
   const $ = (id) => document.getElementById(id);
@@ -403,12 +441,14 @@ input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); ou
     const s = docs.get('settings');
     currency = (s && s.currency) || 'USD';
     renderHeader();
-    if (!ui.editor) renderMain();
+    if (!ui.editor && gate === 'app') renderMain();
   }
 
+  const MIME = { csv: 'text/csv', json: 'application/json', pdf: 'application/pdf', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' };
   async function deviceSave(o) {
-    const type = /\.csv$/i.test(o.filename) ? 'text/csv' : 'application/json';
-    const blob = new Blob([o.data], { type: type });
+    const ext = (o.filename.split('.').pop() || '').toLowerCase();
+    const type = MIME[ext] || 'application/octet-stream';
+    const blob = o.data instanceof Blob ? o.data : new Blob([o.data], { type: type });
     const file = new File([blob], o.filename, { type: type });
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
       try { await navigator.share({ files: [file], title: o.filename }); return { status: 'saved' }; }
@@ -422,28 +462,116 @@ input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); ou
     return { status: 'saved' };
   }
 
+  function loadScript(src) {
+    return new Promise(function (resolve, reject) {
+      const s = document.createElement('script');
+      s.src = src; s.async = true;
+      s.onload = resolve;
+      s.onerror = function () { reject(new Error('Could not load ' + src)); };
+      document.head.append(s);
+    });
+  }
+
   async function initStore() {
     dl = { save: deviceSave };
     try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) { /* optional */ }
-    mode = 'local'; docs = lsLoad(); ready = true; onData();
     if ('serviceWorker' in navigator && location.protocol === 'https:') {
       navigator.serviceWorker.register('sw.js').catch(function () { /* offline cache is optional */ });
     }
+    if (!cloudConfigured) {
+      mode = 'local'; docs = lsLoad(); ready = true;
+      setGate(lockEnabled() ? 'lock' : 'app');
+      onData();
+      return;
+    }
+    try {
+      await loadScript('lib-firebase.js');
+      firebase.initializeApp(FB);
+      auth = firebase.auth();
+      db = firebase.firestore();
+      try { await db.enablePersistence({ synchronizeTabs: true }); } catch (e) { /* offline cache unavailable; still works online */ }
+    } catch (e) {
+      // SDK could not load (first launch while offline): fall back to the device copy
+      mode = 'local'; docs = lsLoad(); ready = true; setGate('app'); onData();
+      toast('Could not reach your account. Showing entries stored on this device.', 'error');
+      return;
+    }
+    auth.onAuthStateChanged(function (u) {
+      if (unsub) { unsub(); unsub = null; }
+      user = u;
+      if (!u) {
+        mode = 'pending'; ready = false; docs = new Map();
+        if (gate !== 'signup' && gate !== 'reset') setGate('signin');
+        return;
+      }
+      startCloud(u);
+    });
   }
 
-  async function putDoc(id, data) {
-    docs = new Map(docs); docs.set(id, data); onData();
-    if (mode === 'cloud') {
-      try { await col.doc(id).set(data); }
-      catch (e) { toast('Could not save. ' + errMsg(e), 'error'); throw e; }
-    } else { lsSave(); }
+  function startCloud(u) {
+    mode = 'cloud'; ready = false;
+    col = db.collection('users').doc(u.uid).collection('docs');
+    const firstSignIn = gate === 'signin' || gate === 'signup';
+    if (lockEnabled() && !firstSignIn) setGate('lock');
+    else if (firstSignIn && lockAvailableCache !== false && !lockEnabled() && !lockDeclined()) setGate('offer');
+    else setGate('app');
+    migrateLocal(u).catch(function () { /* reported inside */ });
+    unsub = col.onSnapshot({ includeMetadataChanges: true }, function (snap) {
+      syncState = snap.metadata.hasPendingWrites ? 'pending' : snap.metadata.fromCache ? 'offline' : 'ok';
+      const changed = !ready || snap.docChanges().length > 0;
+      if (changed) {
+        const m = new Map();
+        snap.forEach(function (d) { m.set(d.id, d.data()); });
+        docs = m; ready = true; onData();
+      } else { renderHeader(); }
+    }, function (e) {
+      toast('Could not load your entries. ' + errMsg(e), 'error');
+    });
   }
-  async function deleteDoc(id) {
-    docs = new Map(docs); docs.delete(id); onData();
+
+  // Entries saved on this device before the account existed are copied into the account once.
+  async function migrateLocal(u) {
+    const flag = 'household-cashbook.migrated.' + u.uid;
+    let local;
+    try { if (localStorage.getItem(flag)) return; local = lsLoad(); } catch (e) { return; }
+    const ids = Array.from(local.keys()).filter(function (id) { return validDoc(id, local.get(id)); });
+    if (!ids.length) { try { localStorage.setItem(flag, '1'); } catch (e) { /* ignore */ } return; }
+    for (let i = 0; i < ids.length; i += 400) {
+      const batch = db.batch();
+      ids.slice(i, i + 400).forEach(function (id) {
+        batch.set(col.doc(id), local.get(id));
+      });
+      await batch.commit();
+    }
+    try {
+      localStorage.setItem(LS_KEY + '.before-account', localStorage.getItem(LS_KEY) || '');
+      localStorage.removeItem(LS_KEY);
+      localStorage.setItem(flag, '1');
+    } catch (e) { /* ignore */ }
+    toast(ids.length + (ids.length === 1 ? ' entry' : ' entries') + ' from this iPad copied to your account');
+  }
+
+  // Firestore applies writes to its local cache at once and syncs when online,
+  // so the app does not wait for the server (that would hang while offline).
+  function putDoc(id, data) {
     if (mode === 'cloud') {
-      try { await col.doc(id).delete(); }
-      catch (e) { toast('Could not delete. ' + errMsg(e), 'error'); throw e; }
-    } else { lsSave(); }
+      return new Promise(function (resolve) {
+        col.doc(id).set(data).catch(function (e) { toast('Could not save. ' + errMsg(e), 'error'); });
+        resolve();
+      });
+    }
+    docs = new Map(docs); docs.set(id, data); onData(); lsSave();
+    return Promise.resolve();
+  }
+  function deleteDoc(id) {
+    if (mode === 'cloud') {
+      return new Promise(function (resolve) {
+        col.doc(id).delete().catch(function (e) { toast('Could not delete. ' + errMsg(e), 'error'); });
+        resolve();
+      });
+    }
+    docs = new Map(docs); docs.delete(id); onData(); lsSave();
+    return Promise.resolve();
   }
 
   function listKind(kind) {
@@ -478,8 +606,24 @@ input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); ou
   function renderHeader() {
     $('today').textContent = new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
     const chip = $('sync');
-    chip.dataset.mode = mode;
-    chip.textContent = mode === 'cloud' ? 'Synced to your account' : mode === 'local' ? 'Stored on this device' : 'Connecting…';
+    const inApp = gate === 'app';
+    chip.hidden = !inApp;
+    document.querySelector('.tabs').hidden = !inApp;
+    if (mode === 'cloud') {
+      chip.dataset.mode = syncState === 'ok' ? 'cloud' : 'local';
+      chip.textContent = syncState === 'ok' ? 'Synced to your account' : syncState === 'pending' ? 'Saving to your account…' : 'Offline · will sync later';
+    } else {
+      chip.dataset.mode = mode;
+      chip.textContent = mode === 'local' ? 'Stored on this device' : 'Connecting…';
+    }
+  }
+
+  function setGate(g, msg) {
+    gate = g; gateMsg = msg || null;
+    if (g !== 'app') ui.editor = null;
+    renderHeader();
+    renderMain();
+    if (g === 'lock') autoUnlock();
   }
 
   function updateTabs() {
@@ -496,8 +640,9 @@ input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); ou
     const main = $('main');
     main.replaceChildren();
     updateTabs();
-    if (!ready) { main.append(loadingView()); return; }
-    const views = { overview: viewOverview, journal: viewJournal, income: viewIncome, budgets: viewBudgets, settings: viewSettings };
+    if (gate !== 'app' && gate !== 'boot') { main.append(viewGate()); return; }
+    if (!ready || gate === 'boot') { main.append(loadingView()); return; }
+    const views = { overview: viewOverview, journal: viewJournal, income: viewIncome, budgets: viewBudgets, export: viewExport, settings: viewSettings };
     main.append(views[ui.tab]());
   }
 
@@ -916,6 +1061,603 @@ input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); ou
     return sec;
   }
 
+  /* ---------- Face ID lock (passkey on this device) ---------- */
+  // Face ID works in Safari web apps through passkeys (WebAuthn). The passkey lives in the
+  // iPad's keychain; Cashbook asks iPadOS to confirm it with Face ID (or the device passcode)
+  // before showing your data. Your Firebase sign-in stays active underneath.
+  let lockAvailableCache = null;
+  function checkLockAvailable() {
+    try {
+      if (!window.PublicKeyCredential || !PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable) { lockAvailableCache = false; return; }
+      PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()
+        .then(function (ok) { lockAvailableCache = !!ok; if (gate === 'app' && ui.tab === 'settings' && !ui.editor) renderMain(); })
+        .catch(function () { lockAvailableCache = false; });
+    } catch (e) { lockAvailableCache = false; }
+  }
+  const lockKey = () => LOCK_PREFIX + (user ? user.uid : 'none');
+  function lockGet() {
+    if (!user) return null;
+    try { const o = JSON.parse(localStorage.getItem(lockKey()) || 'null'); return o && o.id ? o : null; } catch (e) { return null; }
+  }
+  function lockSet(o) { try { if (o) localStorage.setItem(lockKey(), JSON.stringify(o)); else localStorage.removeItem(lockKey()); } catch (e) { /* ignore */ } }
+  const lockEnabled = () => !!lockGet();
+  function lockDeclined() { try { return !!localStorage.getItem(lockKey() + '.declined'); } catch (e) { return false; } }
+  function setLockDeclined() { try { localStorage.setItem(lockKey() + '.declined', '1'); } catch (e) { /* ignore */ } }
+
+  const b64u = (buf) => btoa(String.fromCharCode.apply(null, new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  function unb64u(s) {
+    const b = atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4));
+    const out = new Uint8Array(b.length);
+    for (let i = 0; i < b.length; i++) out[i] = b.charCodeAt(i);
+    return out;
+  }
+  const challenge = () => crypto.getRandomValues(new Uint8Array(32));
+
+  async function enableLock() {
+    if (!user) return false;
+    const cred = await navigator.credentials.create({ publicKey: {
+      challenge: challenge(),
+      rp: { name: 'Cashbook', id: location.hostname },
+      user: { id: new TextEncoder().encode(user.uid), name: user.email || 'Cashbook', displayName: user.email || 'Cashbook' },
+      pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
+      authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'preferred' },
+      timeout: 60000,
+      attestation: 'none'
+    } });
+    if (!cred) return false;
+    const prev = lockGet();
+    lockSet({ id: b64u(cred.rawId), after: prev ? prev.after : 1 });
+    return true;
+  }
+
+  async function verifyLock() {
+    const l = lockGet();
+    if (!l) return true;
+    const cred = await navigator.credentials.get({ publicKey: {
+      challenge: challenge(),
+      rpId: location.hostname,
+      allowCredentials: [{ type: 'public-key', id: unb64u(l.id), transports: ['internal', 'hybrid'] }],
+      userVerification: 'required',
+      timeout: 60000
+    } });
+    return !!cred;
+  }
+
+  async function unlock(quiet) {
+    if (unlockBusy) return;
+    unlockBusy = true;
+    try {
+      if (await verifyLock()) { hiddenAt = 0; setGate('app'); }
+    } catch (e) {
+      if (!quiet) setGate('lock', { text: e && e.name === 'NotAllowedError' ? 'Face ID was cancelled or did not match. Try again, or use your password.' : 'Face ID is not available right now. Use your password.' });
+    } finally { unlockBusy = false; }
+  }
+  function autoUnlock() { setTimeout(function () { if (gate === 'lock') unlock(true); }, 350); }
+
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'hidden') {
+      if (gate === 'app' && lockEnabled()) hiddenAt = Date.now();
+      return;
+    }
+    const l = lockGet();
+    if (l && gate === 'app' && hiddenAt && !unlockBusy && Date.now() - hiddenAt >= (l.after || 0) * 60000) {
+      if (ui.editor && editorChanged()) { hiddenAt = 0; return; } // never throw away an entry being typed
+      setGate('lock');
+    }
+    hiddenAt = 0;
+  });
+
+  /* ---------- sign-in screens ---------- */
+  const AUTH_ERR = {
+    'auth/invalid-credential': 'Email or password is not correct.',
+    'auth/invalid-login-credentials': 'Email or password is not correct.',
+    'auth/wrong-password': 'Email or password is not correct.',
+    'auth/user-not-found': 'Email or password is not correct.',
+    'auth/invalid-email': 'Enter a valid email address.',
+    'auth/missing-password': 'Enter your password.',
+    'auth/email-already-in-use': 'An account with this email already exists. Sign in instead.',
+    'auth/weak-password': 'Use a password of at least 8 characters.',
+    'auth/too-many-requests': 'Too many attempts. Wait a few minutes, or reset your password.',
+    'auth/network-request-failed': 'No internet connection. Connect and try again.',
+    'auth/user-disabled': 'This account has been disabled.',
+    'auth/operation-not-allowed': 'Email sign-in is not turned on in Firebase. See the setup steps.',
+    'auth/unauthorized-domain': 'This web address is not authorised in Firebase. See the setup steps.'
+  };
+  const authErr = (e) => AUTH_ERR[e && e.code] || ('Something went wrong. ' + errMsg(e));
+
+  function pwField(id, label, ac) {
+    const input = h('input', { id: id, type: 'password', autocomplete: ac, autocapitalize: 'off', spellcheck: 'false', required: true });
+    const tog = h('button', { type: 'button', class: 'link', 'aria-controls': id, onclick: function () {
+      const show = input.type === 'password';
+      input.type = show ? 'text' : 'password';
+      tog.textContent = show ? 'Hide' : 'Show';
+    } }, 'Show');
+    return { input: input, el: h('div', { class: 'field' }, h('label', { for: id }, label), h('div', { class: 'pw-wrap' }, input, tog)) };
+  }
+  function emailField(value) {
+    const input = h('input', { id: 'a-email', type: 'email', autocomplete: 'username', autocapitalize: 'off', spellcheck: 'false', inputmode: 'email', value: value || '', required: true });
+    return { input: input, el: h('div', { class: 'field' }, h('label', { for: 'a-email' }, 'Email'), input) };
+  }
+  function msgBox() { return gateMsg ? h('div', { class: 'form-msg' + (gateMsg.ok ? ' ok' : ''), role: 'alert' }, gateMsg.text) : ''; }
+  let lastEmail = '';
+
+  function busy(btn, on, text) { btn.disabled = on; if (text) btn.textContent = text; }
+
+  function viewGate() {
+    const card = h('div', { class: 'card' });
+    const wrap = h('div', { class: 'gate' }, card);
+
+    if (gate === 'signin') {
+      const em = emailField(lastEmail), pw = pwField('a-pass', 'Password', 'current-password');
+      const btn = h('button', { type: 'submit', class: 'btn primary' }, 'Sign in');
+      card.append(h('h2', null, 'Sign in'), h('p', { class: 'lead' }, 'Your entries are saved to your account and appear on any device where you sign in.'), msgBox(),
+        h('form', { novalidate: true, onsubmit: function (ev) {
+          ev.preventDefault();
+          lastEmail = em.input.value.trim();
+          if (!lastEmail || !pw.input.value) { setGate('signin', { text: 'Enter your email and password.' }); return; }
+          busy(btn, true, 'Signing in…');
+          auth.signInWithEmailAndPassword(lastEmail, pw.input.value).catch(function (e) { setGate('signin', { text: authErr(e) }); });
+        } }, em.el, pw.el, btn),
+        h('div', { class: 'alt' },
+          h('button', { type: 'button', class: 'link', onclick: function () { lastEmail = em.input.value.trim(); setGate('reset'); } }, 'Forgot your password?'),
+          h('span', null, 'New to Cashbook? ', h('button', { type: 'button', class: 'link', onclick: function () { lastEmail = em.input.value.trim(); setGate('signup'); } }, 'Create an account'))));
+      requestAnimationFrame(function () { (lastEmail ? pw.input : em.input).focus(); });
+    }
+
+    else if (gate === 'signup') {
+      const em = emailField(lastEmail), pw = pwField('a-pass', 'Password', 'new-password'), pw2 = pwField('a-pass2', 'Repeat password', 'new-password');
+      const btn = h('button', { type: 'submit', class: 'btn primary' }, 'Create account');
+      card.append(h('h2', null, 'Create your account'), h('p', { class: 'lead' }, 'Use an email you can open: it is how you reset a forgotten password.'), msgBox(),
+        h('form', { novalidate: true, onsubmit: function (ev) {
+          ev.preventDefault();
+          lastEmail = em.input.value.trim();
+          if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(lastEmail)) { setGate('signup', { text: 'Enter a valid email address.' }); return; }
+          if (pw.input.value.length < 8) { setGate('signup', { text: 'Use a password of at least 8 characters.' }); return; }
+          if (pw.input.value !== pw2.input.value) { setGate('signup', { text: 'The two passwords do not match.' }); return; }
+          busy(btn, true, 'Creating account…');
+          auth.createUserWithEmailAndPassword(lastEmail, pw.input.value)
+            .then(function (c) { if (c && c.user && c.user.sendEmailVerification) c.user.sendEmailVerification().catch(function () {}); })
+            .catch(function (e) { setGate('signup', { text: authErr(e) }); });
+        } }, em.el, pw.el, h('p', { class: 'hint' }, 'At least 8 characters. Your iPad can suggest a strong password and remember it.'), pw2.el, btn),
+        h('div', { class: 'alt' }, h('span', null, 'Already have an account? ', h('button', { type: 'button', class: 'link', onclick: function () { lastEmail = em.input.value.trim(); setGate('signin'); } }, 'Sign in'))));
+      requestAnimationFrame(function () { em.input.focus(); });
+    }
+
+    else if (gate === 'reset') {
+      const em = emailField(lastEmail);
+      const btn = h('button', { type: 'submit', class: 'btn primary' }, 'Send reset link');
+      card.append(h('h2', null, 'Reset your password'), h('p', { class: 'lead' }, 'We will email you a link to choose a new password.'), msgBox(),
+        h('form', { novalidate: true, onsubmit: function (ev) {
+          ev.preventDefault();
+          lastEmail = em.input.value.trim();
+          if (!lastEmail) { setGate('reset', { text: 'Enter your email address.' }); return; }
+          busy(btn, true, 'Sending…');
+          auth.sendPasswordResetEmail(lastEmail)
+            .then(function () { setGate('signin', { ok: true, text: 'If an account exists for ' + lastEmail + ', a reset link is on its way. Check your inbox and spam folder.' }); })
+            .catch(function (e) { setGate('reset', { text: authErr(e) }); });
+        } }, em.el, btn),
+        h('div', { class: 'alt' }, h('button', { type: 'button', class: 'link', onclick: function () { setGate('signin'); } }, 'Back to sign in')));
+      requestAnimationFrame(function () { em.input.focus(); });
+    }
+
+    else if (gate === 'offer') {
+      const yes = h('button', { type: 'button', class: 'btn primary', onclick: function () {
+        busy(yes, true);
+        enableLock().then(function (ok) {
+          if (ok) { toast('Face ID is on. Cashbook will ask for it when you open the app.'); }
+          setGate('app');
+        }).catch(function (e) {
+          setGate('offer', { text: e && e.name === 'NotAllowedError' ? 'Face ID setup was cancelled.' : 'Face ID could not be set up here. ' + errMsg(e) });
+        });
+      } }, 'Turn on Face ID');
+      card.append(faceIcon(), h('h2', null, 'Unlock with Face ID?'),
+        h('p', { class: 'lead' }, 'Open Cashbook with a glance instead of typing your password. Your iPad keeps the key in its keychain; nothing about your face leaves the device.'),
+        msgBox(), yes,
+        h('button', { type: 'button', class: 'btn', onclick: function () { setLockDeclined(); setGate('app'); } }, 'Not now'),
+        h('p', { class: 'hint', style: { marginTop: '14px', marginBottom: '0' } }, 'You can change this later in Settings.'));
+    }
+
+    else if (gate === 'lock') {
+      const unlockBtn = h('button', { type: 'button', class: 'btn primary', onclick: function () { unlock(false); } }, 'Unlock with Face ID');
+      card.append(faceIcon(), h('h2', null, 'Cashbook is locked'),
+        h('p', { class: 'lead' }, user && user.email ? 'Signed in as ' + user.email + '.' : ''), msgBox(), unlockBtn);
+      if (user && auth) {
+        const pw = pwField('a-pass', 'Password', 'current-password');
+        const pbtn = h('button', { type: 'submit', class: 'btn' }, 'Unlock with password');
+        const form = h('form', { novalidate: true, hidden: true, style: { marginTop: '16px' }, onsubmit: function (ev) {
+          ev.preventDefault();
+          if (!pw.input.value) return;
+          busy(pbtn, true, 'Checking…');
+          const cred = firebase.auth.EmailAuthProvider.credential(user.email, pw.input.value);
+          user.reauthenticateWithCredential(cred).then(function () { hiddenAt = 0; setGate('app'); })
+            .catch(function (e) { setGate('lock', { text: authErr(e) }); });
+        } }, h('input', { type: 'email', autocomplete: 'username', value: user.email || '', hidden: true, readonly: true }), pw.el, pbtn);
+        const usePw = h('button', { type: 'button', class: 'link', onclick: function () { form.hidden = false; usePw.hidden = true; pw.input.focus(); } }, 'Use password instead');
+        card.append(form, h('div', { class: 'alt' }, usePw, h('button', { type: 'button', class: 'link', onclick: signOut }, 'Sign out')));
+        if (gateMsg && !gateMsg.ok) { form.hidden = false; usePw.hidden = true; }
+      }
+    }
+    return wrap;
+  }
+
+  function faceIcon() {
+    const svg = S('svg', { width: 30, height: 30, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 'stroke-width': 1.8, 'stroke-linecap': 'round', 'aria-hidden': 'true' },
+      S('path', { d: 'M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2' }),
+      S('path', { d: 'M9 9v1.5M15 9v1.5M12 9v4h-1M9.5 16a4 4 0 0 0 5 0' }));
+    return h('div', { class: 'lock-icon' }, svg);
+  }
+
+  function signOut() {
+    if (!auth) return;
+    if (unsub) { unsub(); unsub = null; }
+    ui.tab = 'overview';
+    auth.signOut()
+      .then(function () { return db.terminate(); })
+      .then(function () { return db.clearPersistence(); })
+      .catch(function () { /* cache clear is best effort */ })
+      .then(function () { location.reload(); });
+  }
+
+  /* ---------- export ---------- */
+  const libs = {};
+  function ensureLib(name) {
+    if (!libs[name]) {
+      libs[name] = loadScript(name === 'pdf' ? 'lib-pdf.js' : 'lib-xlsx.js').catch(function (e) { delete libs[name]; throw e; });
+    }
+    return libs[name];
+  }
+
+  const XPERIODS = [['month', 'This month'], ['last', 'Last month'], ['quarter', 'This quarter'], ['year', 'This year'], ['lastyear', 'Last year'], ['all', 'All time'], ['custom', 'Choose dates…']];
+  const addDays = (s, n) => { const d = parseISO(s); return iso(new Date(d.getFullYear(), d.getMonth(), d.getDate() + n)); };
+
+  function exportRange() {
+    const now = new Date();
+    let r, label;
+    if (ui.xPeriod === 'last') { r = periodRange('monthly', new Date(now.getFullYear(), now.getMonth() - 1, 1)); label = rangeLabel('monthly', r); }
+    else if (ui.xPeriod === 'quarter') { r = periodRange('quarterly', now); label = rangeLabel('quarterly', r); }
+    else if (ui.xPeriod === 'year') { r = periodRange('yearly', now); label = 'Year ' + rangeLabel('yearly', r); }
+    else if (ui.xPeriod === 'lastyear') { r = periodRange('yearly', new Date(now.getFullYear() - 1, 0, 1)); label = 'Year ' + rangeLabel('yearly', r); }
+    else if (ui.xPeriod === 'all' || ui.xPeriod === 'custom') {
+      let lo = todayISO(), hi = todayISO();
+      docs.forEach(function (d) { if (d && d.date && isISO(d.date)) { if (d.date < lo) lo = d.date; if (d.date > hi) hi = d.date; } });
+      let s = lo, eIncl = hi;
+      if (ui.xPeriod === 'custom') {
+        s = isISO(ui.xFrom) ? ui.xFrom : iso(new Date(now.getFullYear(), now.getMonth(), 1));
+        eIncl = isISO(ui.xTo) ? ui.xTo : todayISO();
+        if (eIncl < s) { const t = s; s = eIncl; eIncl = t; }
+      }
+      r = { start: s, end: addDays(eIncl, 1), startDate: parseISO(s), endDate: parseISO(eIncl) };
+      label = (ui.xPeriod === 'all' ? 'All time · ' : '') + fmtDate(s) + ' to ' + fmtDate(eIncl);
+    }
+    else { r = periodRange('monthly', now); label = rangeLabel('monthly', r); }
+    // never report on months that have not started: recurring income would be counted ahead of time
+    const cap = periodRange('monthly', now);
+    if (r.end > cap.end) {
+      r = { start: r.start < cap.end ? r.start : cap.start, end: cap.end, startDate: r.start < cap.end ? r.startDate : cap.startDate, endDate: cap.endDate };
+      label += ' (to date)';
+    }
+    r.label = label;
+    r.lastDay = iso(r.endDate);
+    return r;
+  }
+
+  const daysBetween = (a, b) => Math.round((parseISO(b) - parseISO(a)) / 86400000);
+
+  function reportData(r) {
+    const exp = listKind('expense').filter((e) => inR(e.date, r)).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : (a.created || 0) - (b.created || 0)));
+    const incAll = listKind('income');
+    const months = [];
+    let cur = new Date(r.startDate.getFullYear(), r.startDate.getMonth(), 1);
+    while (iso(cur) < r.end) {
+      const mr = periodRange('monthly', cur);
+      const s = mr.start > r.start ? mr.start : r.start;
+      const e = mr.end < r.end ? mr.end : r.end;
+      const part = { start: s, end: e };
+      const frac = daysBetween(s, e) / daysBetween(mr.start, mr.end);
+      let income = 0;
+      incAll.forEach(function (i) {
+        if (i.frequency === 'once') { if (inR(i.date, part)) income += i.amount; }
+        else if (i.date < e) income += i.amount * (FREQ_FACTOR[i.frequency] || 1) * frac;
+      });
+      const spent = sum(exp.filter((x) => inR(x.date, part)));
+      months.push({ label: cur.toLocaleDateString(undefined, { month: 'short', year: '2-digit' }), full: cur.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }), income: income, spent: spent, net: income - spent });
+      cur = new Date(cur.getFullYear(), cur.getMonth() + 1, 1);
+    }
+    const income = months.reduce((t, m) => t + m.income, 0);
+    const spent = sum(exp);
+    const byCat = new Map();
+    exp.forEach(function (e) {
+      const k = (e.category || 'Other').toLowerCase();
+      const c = byCat.get(k) || { name: e.category || 'Other', total: 0, count: 0 };
+      c.total += e.amount; c.count++; byCat.set(k, c);
+    });
+    const cats = Array.from(byCat.values()).sort((a, b) => b.total - a.total);
+    const incRows = incAll.filter((i) => i.frequency === 'once' ? inR(i.date, r) : i.date < r.end).sort(byDateDesc).reverse()
+      .map((i) => ({ i: i, counted: 0 }));
+    // amount each income source contributes to the period (same rule as the monthly totals)
+    incRows.forEach(function (row) {
+      const i = row.i;
+      if (i.frequency === 'once') { row.counted = i.amount; return; }
+      let t = 0, c = new Date(r.startDate.getFullYear(), r.startDate.getMonth(), 1);
+      while (iso(c) < r.end) {
+        const mr = periodRange('monthly', c);
+        const s = mr.start > r.start ? mr.start : r.start, e = mr.end < r.end ? mr.end : r.end;
+        if (i.date < e) t += i.amount * (FREQ_FACTOR[i.frequency] || 1) * daysBetween(s, e) / daysBetween(mr.start, mr.end);
+        c = new Date(c.getFullYear(), c.getMonth() + 1, 1);
+      }
+      row.counted = t;
+    });
+    const allExp = listKind('expense');
+    const budgets = listKind('budget').map(function (b) { const s = budgetStats(b, allExp); return { b: b, s: s }; })
+      .sort((a, b) => b.s.ratio - a.s.ratio);
+    return { r: r, exp: exp, months: months, income: income, spent: spent, left: income - spent, cats: cats, incRows: incRows, budgets: budgets };
+  }
+
+  const fileStamp = (r) => r.start === r.lastDay ? r.start : r.start + '_to_' + r.lastDay;
+  const decimals = () => NO_DECIMALS.includes(currency) ? 0 : 2;
+
+  // jsPDF's built-in fonts only cover Western European characters
+  function pdfText(s) {
+    return String(s == null ? '' : s)
+      .replace(/[‘’‚′]/g, "'").replace(/[“”„″]/g, '"')
+      .replace(/[–—−]/g, '-').replace(/…/g, '...').replace(/[   ]/g, ' ').replace(/·/g, '-')
+      .normalize('NFC').replace(/[^\x09\x0A\x0D\x20-\x7E -ÿ€]/g, '');
+  }
+
+  function buildPDF(rd) {
+    const J = window.jspdf.jsPDF;
+    const doc = new J({ unit: 'pt', format: 'a4' });
+    const W = doc.internal.pageSize.getWidth(), H = doc.internal.pageSize.getHeight(), M = 40;
+    const nf = new Intl.NumberFormat('en-US', { minimumFractionDigits: decimals(), maximumFractionDigits: decimals() });
+    const N = (v) => nf.format(Math.round(v * 100) / 100 || 0);
+    const C = { ink: [20, 33, 43], muted: [88, 105, 118], rule: [211, 219, 226], accent: [22, 100, 192], income: [42, 120, 214], spend: [235, 104, 52], pos: [23, 114, 74], neg: [179, 54, 44], soft: [238, 242, 245] };
+    const T = (s, x, y, o) => doc.text(pdfText(s), x, y, o);
+    let y = M;
+
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(20); doc.setTextColor.apply(doc, C.ink);
+    T('Household Cashbook report', M, y + 8);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(10.5); doc.setTextColor.apply(doc, C.muted);
+    y += 28;
+    T(rd.r.label + '   |   Amounts in ' + currency, M, y);
+    y += 14;
+    T('Created ' + new Date().toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) + (user && user.email ? '   |   ' + user.email : ''), M, y);
+    y += 22;
+
+    // summary tiles
+    const tiles = [['Income', rd.income, C.income], ['Spending', rd.spent, C.spend], [rd.left >= 0 ? 'Left over' : 'Overspent', Math.abs(rd.left), rd.left >= 0 ? C.pos : C.neg]];
+    const tw = (W - 2 * M - 20) / 3;
+    tiles.forEach(function (t, i) {
+      const x = M + i * (tw + 10);
+      doc.setFillColor.apply(doc, C.soft); doc.roundedRect(x, y, tw, 58, 6, 6, 'F');
+      doc.setFillColor.apply(doc, t[2]); doc.rect(x, y + 8, 3, 42, 'F');
+      doc.setFontSize(9.5); doc.setTextColor.apply(doc, C.muted); T(t[0].toUpperCase(), x + 14, y + 22);
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(16); doc.setTextColor.apply(doc, C.ink); T(N(t[1]), x + 14, y + 44);
+      doc.setFont('helvetica', 'normal');
+    });
+    y += 78;
+
+    function heading(text) {
+      if (y > H - 120) { doc.addPage(); y = M; }
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(13); doc.setTextColor.apply(doc, C.ink);
+      T(text, M, y); y += 10;
+      doc.setFont('helvetica', 'normal');
+    }
+
+    // chart: income and spending by month
+    if (rd.months.length >= 2 && (rd.income > 0 || rd.spent > 0)) {
+      heading('Income and spending by month');
+      const ch = 150, cx0 = M + 44, cx1 = W - M, cy1 = y + 14 + ch, cyTop = y + 14;
+      const top = Math.max.apply(null, rd.months.map((m) => Math.max(m.income, m.spent)).concat([1]));
+      const nt = niceTicks(0, top * 1.05, 4);
+      const yv = (v) => cy1 - (v - nt.lo) / (nt.hi - nt.lo) * (cy1 - cyTop);
+      doc.setFontSize(8); doc.setTextColor.apply(doc, C.muted); doc.setLineWidth(0.5);
+      nt.ticks.forEach(function (t) {
+        doc.setDrawColor.apply(doc, t === 0 ? [139, 155, 168] : C.rule); doc.line(cx0, yv(t), cx1, yv(t));
+        T(compact(t), cx0 - 6, yv(t) + 3, { align: 'right' });
+      });
+      const n = rd.months.length, band = (cx1 - cx0) / n, bw = Math.max(2, Math.min(16, (band - 6) / 2 - 1));
+      const every = Math.ceil(n / 12);
+      rd.months.forEach(function (m, i) {
+        const mx = cx0 + band * (i + 0.5);
+        const hi = cy1 - yv(m.income), hs = cy1 - yv(m.spent);
+        doc.setFillColor.apply(doc, C.income); if (hi > 0.3) doc.rect(mx - 1 - bw, cy1 - hi, bw, hi, 'F');
+        doc.setFillColor.apply(doc, C.spend); if (hs > 0.3) doc.rect(mx + 1, cy1 - hs, bw, hs, 'F');
+        if (i % every === 0) T(m.label, mx, cy1 + 12, { align: 'center' });
+      });
+      y = cy1 + 26;
+      [['Income', C.income], ['Spending', C.spend]].forEach(function (l, i) {
+        const lx = M + i * 90;
+        doc.setFillColor.apply(doc, l[1]); doc.rect(lx, y - 7, 8, 8, 'F');
+        doc.setTextColor.apply(doc, C.ink); doc.setFontSize(9); T(l[0], lx + 12, y);
+      });
+      y += 20;
+    }
+
+    // chart: spending by category
+    if (rd.cats.length) {
+      const shown = rd.cats.slice(0, 8);
+      if (y + 30 + shown.length * 20 > H - M) { doc.addPage(); y = M; }
+      heading('Where the money went');
+      y += 6;
+      const lw = 120, bx = M + lw, bmax = W - M - bx - 110, max = shown[0].total;
+      shown.forEach(function (c) {
+        doc.setFontSize(9.5); doc.setTextColor.apply(doc, C.ink);
+        T(c.name.length > 22 ? c.name.slice(0, 21) + '...' : c.name, M, y + 9);
+        doc.setFillColor.apply(doc, C.rule); doc.roundedRect(bx, y + 2, bmax, 9, 3, 3, 'F');
+        doc.setFillColor.apply(doc, C.spend); doc.roundedRect(bx, y + 2, Math.max(4, c.total / max * bmax), 9, 3, 3, 'F');
+        doc.setTextColor.apply(doc, C.muted);
+        T(N(c.total) + '  (' + Math.round(c.total / (rd.spent || 1) * 100) + '%)', W - M, y + 9, { align: 'right' });
+        y += 20;
+      });
+      if (rd.cats.length > shown.length) { doc.setFontSize(9); doc.setTextColor.apply(doc, C.muted); T('Other categories are listed in the table below.', M, y + 4); y += 12; }
+      y += 14;
+    }
+
+    const tableBase = {
+      margin: { left: M, right: M, bottom: 50 },
+      styles: { font: 'helvetica', fontSize: 9, cellPadding: 5, textColor: C.ink, lineColor: C.rule, lineWidth: 0.5 },
+      headStyles: { fillColor: C.soft, textColor: C.muted, fontStyle: 'bold', fontSize: 8.5 },
+      alternateRowStyles: { fillColor: [250, 251, 252] },
+      theme: 'grid'
+    };
+    function table(title, head, body, rightCols, foot) {
+      heading(title);
+      const colStyles = {};
+      rightCols.forEach(function (c) { colStyles[c] = { halign: 'right' }; });
+      doc.autoTable(Object.assign({}, tableBase, {
+        startY: y,
+        head: [head.map(pdfText)],
+        body: body.map((r) => r.map(pdfText)),
+        foot: foot ? [foot.map(pdfText)] : undefined,
+        footStyles: { fillColor: [255, 255, 255], textColor: C.ink, fontStyle: 'bold' },
+        showFoot: 'lastPage',
+        columnStyles: colStyles,
+        didParseCell: function (d) { if (rightCols.includes(d.column.index)) d.cell.styles.halign = 'right'; }
+      }));
+      y = doc.lastAutoTable.finalY + 24;
+    }
+
+    if (rd.months.length >= 2) {
+      table('Monthly summary', ['Month', 'Income', 'Spending', 'Left'], rd.months.map((m) => [m.full, N(m.income), N(m.spent), N(m.net)]), [1, 2, 3],
+        ['Total', N(rd.income), N(rd.spent), N(rd.left)]);
+    }
+    if (rd.cats.length) {
+      table('Spending by category', ['Category', 'Entries', 'Amount', 'Share'], rd.cats.map((c) => [c.name, String(c.count), N(c.total), Math.round(c.total / (rd.spent || 1) * 100) + '%']), [1, 2, 3],
+        ['Total', String(rd.exp.length), N(rd.spent), '100%']);
+    }
+    if (rd.budgets.length) {
+      table('Budgets (current period, as of today)', ['Budget', 'Period', 'Limit', 'Spent', 'Status'], rd.budgets.map(function (x) {
+        return [x.b.category === 'All' ? 'All spending' : x.b.category, rangeLabel(x.b.period, x.s.r), N(x.b.amount), N(x.s.spent),
+          x.s.left >= 0 ? N(x.s.left) + ' left (' + Math.round(x.s.ratio * 100) + '%)' : 'Over by ' + N(-x.s.left)];
+      }), [2, 3, 4]);
+    }
+    if (rd.incRows.length) {
+      table('Income', ['Date', 'Source', 'How often', 'Amount', 'Counted in period'], rd.incRows.map((x) => [fmtDate(x.i.date), x.i.title, FREQ_TITLE[x.i.frequency] || x.i.frequency, N(x.i.amount), N(x.counted)]), [3, 4],
+        ['', '', '', 'Total', N(rd.income)]);
+    }
+    table('Expenses', ['Date', 'Description', 'Category', 'Note', 'Amount'], rd.exp.length ? rd.exp.map((e) => [fmtDate(e.date), e.title, e.category, e.note || '', N(e.amount)]) : [['', 'No expenses in this period', '', '', '']], [4],
+      ['', '', '', 'Total', N(rd.spent)]);
+
+    const pages = doc.getNumberOfPages();
+    for (let p = 1; p <= pages; p++) {
+      doc.setPage(p);
+      doc.setFontSize(8.5); doc.setTextColor.apply(doc, C.muted);
+      T('Household Cashbook  -  ' + rd.r.label, M, H - 24);
+      T('Page ' + p + ' of ' + pages, W - M, H - 24, { align: 'right' });
+    }
+    return doc.output('blob');
+  }
+
+  function buildXLSX(rd) {
+    const X = window.XLSX;
+    const wb = X.utils.book_new();
+    const numZ = decimals() ? '#,##0.00' : '#,##0';
+    const serial = (s) => { const p = s.split('-').map(Number); return (Date.UTC(p[0], p[1] - 1, p[2]) - Date.UTC(1899, 11, 30)) / 86400000; };
+    function sheet(name, rows, opts) {
+      const ws = X.utils.aoa_to_sheet(rows);
+      const ref = X.utils.decode_range(ws['!ref']);
+      for (let R = (opts.from || 1); R <= ref.e.r; R++) {
+        (opts.money || []).forEach(function (c) { const cell = ws[X.utils.encode_cell({ r: R, c: c })]; if (cell && cell.t === 'n') cell.z = numZ; });
+        (opts.dates || []).forEach(function (c) { const cell = ws[X.utils.encode_cell({ r: R, c: c })]; if (cell && cell.t === 'n') cell.z = 'dd mmm yyyy'; });
+        (opts.pct || []).forEach(function (c) { const cell = ws[X.utils.encode_cell({ r: R, c: c })]; if (cell && cell.t === 'n') cell.z = '0%'; });
+      }
+      ws['!cols'] = opts.widths.map((w) => ({ wch: w }));
+      if (opts.filter && rows.length > 1) ws['!autofilter'] = { ref: X.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: rows.length - 1, c: rows[0].length - 1 } }) };
+      X.utils.book_append_sheet(wb, ws, name);
+    }
+    const cur = ' (' + currency + ')';
+    sheet('Summary', [
+      ['Household Cashbook report'], ['Period', rd.r.label], ['From', serial(rd.r.start)], ['To', serial(rd.r.lastDay)], ['Currency', currency],
+      ['Created', new Date().toLocaleString()], [],
+      ['Income' + cur, rd.income], ['Spending' + cur, rd.spent], ['Left' + cur, rd.left], ['Expense entries', rd.exp.length]
+    ], { from: 2, money: [1], dates: [], widths: [22, 34] });
+    const ws0 = wb.Sheets.Summary; ['B3', 'B4'].forEach(function (a) { ws0[a].z = 'dd mmm yyyy'; }); ws0.B11.z = '0';
+    sheet('Monthly', [['Month', 'Income' + cur, 'Spending' + cur, 'Left' + cur]].concat(rd.months.map((m) => [m.full, m.income, m.spent, m.net])),
+      { money: [1, 2, 3], widths: [20, 16, 16, 16] });
+    sheet('Categories', [['Category', 'Entries', 'Amount' + cur, 'Share']].concat(rd.cats.map((c) => [c.name, c.count, c.total, rd.spent ? c.total / rd.spent : 0])),
+      { money: [2], pct: [3], widths: [22, 10, 16, 10] });
+    sheet('Expenses', [['Date', 'Description', 'Category', 'Amount' + cur, 'Note']].concat(rd.exp.map((e) => [serial(e.date), e.title, e.category, e.amount, e.note || ''])),
+      { dates: [0], money: [3], widths: [13, 30, 16, 16, 36], filter: true });
+    sheet('Income', [['Date', 'Source', 'How often', 'Amount' + cur, 'Counted in period' + cur]].concat(rd.incRows.map((x) => [serial(x.i.date), x.i.title, FREQ_TITLE[x.i.frequency] || x.i.frequency, x.i.amount, x.counted])),
+      { dates: [0], money: [3, 4], widths: [13, 26, 12, 16, 24], filter: true });
+    sheet('Budgets', [['Budget', 'Period', 'Current period', 'Limit' + cur, 'Spent' + cur, 'Left' + cur, 'Used']].concat(rd.budgets.map((x) => [
+      x.b.category === 'All' ? 'All spending' : x.b.category, PERIOD_TITLE[x.b.period] || x.b.period, rangeLabel(x.b.period, x.s.r), x.b.amount, x.s.spent, x.s.left, x.s.ratio])),
+      { money: [3, 4, 5], pct: [6], widths: [18, 11, 26, 14, 14, 14, 8] });
+    const out = X.write(wb, { bookType: 'xlsx', type: 'array', compression: true });
+    return new Blob([out], { type: MIME.xlsx });
+  }
+
+  async function runExport(kind, btn) {
+    const r = exportRange();
+    const label = btn.textContent;
+    btn.disabled = true;
+    try {
+      if (kind === 'pdf' || kind === 'xlsx') {
+        if (!window[kind === 'pdf' ? 'jspdf' : 'XLSX']) { btn.textContent = 'Preparing…'; await ensureLib(kind); }
+        const rd = reportData(r);
+        const blob = kind === 'pdf' ? buildPDF(rd) : buildXLSX(rd);
+        await saveFile('cashbook-report-' + fileStamp(r) + '.' + kind, blob);
+      } else if (kind === 'csv-exp') {
+        const rows = [['Date', 'Description', 'Category', 'Amount (' + currency + ')', 'Note']];
+        listKind('expense').filter((e) => inR(e.date, r)).sort(byDateDesc).forEach((e) => rows.push([e.date, e.title, e.category, e.amount, e.note || '']));
+        await saveFile('cashbook-expenses-' + fileStamp(r) + '.csv', toCSV(rows));
+      } else if (kind === 'csv-inc') {
+        const rows = [['Date', 'Source', 'Frequency', 'Amount (' + currency + ')', 'Counted in period (' + currency + ')']];
+        reportData(r).incRows.forEach((x) => rows.push([x.i.date, x.i.title, FREQ_TITLE[x.i.frequency] || x.i.frequency, x.i.amount, Math.round(x.counted * 100) / 100]));
+        await saveFile('cashbook-income-' + fileStamp(r) + '.csv', toCSV(rows));
+      }
+    } catch (e) {
+      toast('Could not create the file. ' + (navigator.onLine ? errMsg(e) : 'Connect to the internet once so the export tools can download.'), 'error');
+    } finally { btn.disabled = false; btn.textContent = label; }
+  }
+
+  function viewExport() {
+    ensureLib('pdf').catch(function () {}); ensureLib('xlsx').catch(function () {});
+    const wrap = h('div', { class: 'stack' });
+    const r = exportRange();
+    const nExp = listKind('expense').filter((e) => inR(e.date, r)).length;
+
+    const pSel = selectEl('x-period', XPERIODS, ui.xPeriod);
+    pSel.addEventListener('change', function () {
+      ui.xPeriod = pSel.value;
+      if (ui.xPeriod === 'custom' && !ui.xFrom) { ui.xFrom = iso(new Date(new Date().getFullYear(), new Date().getMonth(), 1)); ui.xTo = todayISO(); }
+      renderMain();
+    });
+    const from = h('input', { id: 'x-from', type: 'date', value: ui.xFrom, onchange: function () { ui.xFrom = from.value; renderMain(); } });
+    const to = h('input', { id: 'x-to', type: 'date', value: ui.xTo, onchange: function () { ui.xTo = to.value; renderMain(); } });
+
+    wrap.append(h('section', null,
+      h('div', { class: 'section-head' }, h('h2', null, 'Export and reports')),
+      h('div', { class: 'card' },
+        field('x-period', 'Period', pSel),
+        ui.xPeriod === 'custom' ? h('div', { class: 'range-row' }, field('x-from', 'From', from), field('x-to', 'To (included)', to)) : null,
+        h('p', { class: 'muted', style: { margin: '0' } }, r.label + ' · ' + nExp + (nExp === 1 ? ' expense' : ' expenses') + ' · amounts in ' + currency))));
+
+    const item = function (title, text, kind, btnLabel, primary) {
+      const b = h('button', { type: 'button', class: 'btn' + (primary ? ' primary' : ''), disabled: !dl }, btnLabel);
+      b.addEventListener('click', function () { runExport(kind, b); });
+      return h('div', { class: 'card export-item' }, h('h3', null, title), h('p', null, text), b);
+    };
+    wrap.append(h('section', null,
+      h('p', { class: 'hint' }, 'When the share sheet opens, choose Save to Files, Mail, WhatsApp or another app.'),
+      h('div', { class: 'export-grid' },
+        item('PDF report', 'Summary, charts, budgets, category totals and every entry for the period. Ready to print or send.', 'pdf', 'Create PDF', true),
+        item('Excel workbook', 'Sheets for summary, months, categories, expenses, income and budgets, with real numbers and dates.', 'xlsx', 'Create Excel file', true),
+        item('Expenses (CSV)', 'A plain list of the period’s expenses for any spreadsheet or accounting tool.', 'csv-exp', 'Export expenses'),
+        item('Income (CSV)', 'Income sources for the period, with the amount counted in it.', 'csv-inc', 'Export income'))));
+
+    const fileIn = h('input', { type: 'file', id: 's-restore', accept: '.json,application/json', onchange: function () {
+      const f = fileIn.files && fileIn.files[0];
+      if (f) importBackup(f).then(function () { fileIn.value = ''; });
+    } });
+    const bk = h('button', { type: 'button', class: 'btn', disabled: !dl, onclick: exportBackup }, 'Save full backup (JSON)');
+    wrap.append(h('section', { class: 'card' }, h('h3', { style: { fontSize: '18px', marginBottom: '6px' } }, 'Backup and restore'),
+      h('p', { class: 'muted', style: { marginBottom: '12px', fontSize: '15px', maxWidth: '64ch' } }, 'A backup holds every entry, budget and setting, whatever period is chosen above. Restoring adds the entries from the file' + (mode === 'cloud' ? ' to your account.' : ' to this device.')),
+      h('div', { class: 'btn-row', style: { marginBottom: '16px' } }, bk),
+      h('div', { class: 'field', style: { marginBottom: '0' } }, h('label', { for: 's-restore' }, 'Restore from a backup file'), fileIn)));
+    return wrap;
+  }
+
   /* ---------- views ---------- */
   function viewOverview() {
     const exp = listKind('expense'), inc = listKind('income'), bud = listKind('budget');
@@ -1091,10 +1833,47 @@ input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); ou
   function viewSettings() {
     const wrap = h('div', { class: 'settings' });
 
-    wrap.append(h('section', { class: 'card' }, h('h3', null, 'Where your data is kept'),
-      h('p', null, mode === 'cloud'
-        ? 'Your entries are stored in your private area of this page. They appear on any device where you open this page signed in. If you share the page, other people get their own empty cashbook and cannot read yours.'
-        : 'Your entries are stored on this device, inside this app. Nothing is sent to any server. Removing the Home Screen app or clearing website data erases them, so export a backup now and then.')));
+    if (mode === 'cloud' && user) {
+      const reset = h('button', { type: 'button', class: 'btn', onclick: function () {
+        reset.disabled = true;
+        auth.sendPasswordResetEmail(user.email)
+          .then(function () { toast('We sent a link to ' + user.email + ' to choose a new password.'); })
+          .catch(function (e) { toast(authErr(e), 'error'); })
+          .then(function () { reset.disabled = false; });
+      } }, 'Change password');
+      wrap.append(h('section', { class: 'card' }, h('h3', null, 'Account'),
+        h('div', { class: 'acct', style: { marginBottom: '12px' } }, h('span', null, 'Signed in as ', h('strong', null, user.email))),
+        h('p', null, 'Your entries are saved to your account and kept on this iPad for offline use. They appear on any device where you sign in. Nobody else can read them.'),
+        h('div', { class: 'btn-row' }, reset, h('button', { type: 'button', class: 'btn danger', onclick: signOut }, 'Sign out'))));
+
+      const l = lockGet();
+      const sec = h('section', { class: 'card' }, h('h3', null, 'Face ID'));
+      if (lockAvailableCache === false) {
+        sec.append(h('p', null, 'Face ID is not available in this browser. On iPad, open Cashbook from its Home Screen icon or in Safari, with Face ID or Touch ID set up in iPad Settings.'));
+      } else {
+        const box = h('input', { type: 'checkbox', id: 's-lock', checked: !!l });
+        box.addEventListener('change', function () {
+          if (box.checked) {
+            enableLock().then(function () { toast('Face ID is on.'); renderMain(); })
+              .catch(function (e) { box.checked = false; toast(e && e.name === 'NotAllowedError' ? 'Face ID setup was cancelled.' : 'Face ID could not be set up. ' + errMsg(e), 'error'); });
+          } else { lockSet(null); toast('Face ID is off. Cashbook opens without asking.'); renderMain(); }
+        });
+        sec.append(h('p', null, 'Ask for Face ID (or Touch ID) before showing your cashbook. If it does not recognise you, enter your iPad passcode or your Cashbook password.'),
+          h('label', { class: 'check', for: 's-lock' }, box, 'Unlock with Face ID'));
+        if (l) {
+          const after = selectEl('s-after', [['0', 'Every time I open it'], ['1', 'After 1 minute away'], ['5', 'After 5 minutes away'], ['15', 'After 15 minutes away']], String(l.after || 0));
+          after.addEventListener('change', function () { const cur = lockGet(); if (cur) { cur.after = Number(after.value); lockSet(cur); toast('Saved'); } });
+          sec.append(h('div', { class: 'field', style: { marginBottom: '0' } }, h('label', { for: 's-after' }, 'Ask again'), after));
+        }
+      }
+      wrap.append(sec);
+    } else {
+      wrap.append(h('section', { class: 'card' }, h('h3', null, 'Where your data is kept'),
+        h('p', null, 'Your entries are stored on this device, inside this app. Nothing is sent to any server. Removing the Home Screen app or clearing website data erases them, so save a backup now and then from the Export tab.'),
+        h('p', { style: { marginBottom: '0' } }, cloudConfigured
+          ? 'Your account could not be reached when the app opened. Close Cashbook and reopen it with an internet connection to sign in.'
+          : 'Sign-in, sync and Face ID turn on once the Firebase settings are added to firebase-config.js. Entries you add now are copied into your account the first time you sign in.')));
+    }
 
     const cur = selectEl('s-currency', CURRENCIES.map((c) => [c, c]), CURRENCIES.includes(currency) ? currency : 'USD');
     cur.addEventListener('change', function () { putDoc('settings', { kind: 'settings', currency: cur.value }).catch(function () {}); });
@@ -1102,17 +1881,9 @@ input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); ou
       h('p', null, 'Amounts are shown in this currency. Changing it does not convert entries you already made.'),
       h('div', { class: 'field' }, h('label', { for: 's-currency' }, 'Currency'), cur)));
 
-    const fileIn = h('input', { type: 'file', id: 's-restore', accept: '.json,application/json', onchange: function () {
-      const f = fileIn.files && fileIn.files[0];
-      if (f) importBackup(f).then(function () { fileIn.value = ''; });
-    } });
-    wrap.append(h('section', { class: 'card' }, h('h3', null, 'Export and restore'),
-      h('p', null, dl ? 'Save a copy of your entries to open in a spreadsheet or to keep as a backup. Choose Save to Files when the share sheet opens.' : 'File saving is not available in this view.'),
-      h('div', { class: 'btn-row', style: { marginBottom: '16px' } },
-        h('button', { type: 'button', class: 'btn', disabled: !dl, onclick: exportExpenses }, 'Expenses (CSV)'),
-        h('button', { type: 'button', class: 'btn', disabled: !dl, onclick: exportIncome }, 'Income (CSV)'),
-        h('button', { type: 'button', class: 'btn', disabled: !dl, onclick: exportBackup }, 'Full backup (JSON)')),
-      h('div', { class: 'field' }, h('label', { for: 's-restore' }, 'Restore from a backup file'), fileIn)));
+    wrap.append(h('section', { class: 'card' }, h('h3', null, 'Export and backup'),
+      h('p', null, 'PDF reports, Excel workbooks, CSV files and full backups are in the Export tab.'),
+      h('button', { type: 'button', class: 'btn', onclick: function () { go('export'); } }, 'Go to Export')));
 
     const ex = [];
     docs.forEach(function (d, id) { if (d && d.example) ex.push(id); });
@@ -1350,16 +2121,6 @@ input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); ou
     try { await dl.save({ filename: name, data: data }); toast('Saved ' + name); }
     catch (e) { if (e && e.code === 'declined') return; toast('Could not save the file.', 'error'); }
   }
-  function exportExpenses() {
-    const rows = [['Date', 'Description', 'Category', 'Amount (' + currency + ')', 'Note']];
-    listKind('expense').sort(byDateDesc).forEach((e) => rows.push([e.date, e.title, e.category, e.amount, e.note || '']));
-    saveFile('cashbook-expenses-' + todayISO() + '.csv', toCSV(rows));
-  }
-  function exportIncome() {
-    const rows = [['Start date', 'Source', 'Frequency', 'Amount (' + currency + ')']];
-    listKind('income').sort(byDateDesc).forEach((i) => rows.push([i.date, i.title, FREQ_TITLE[i.frequency] || i.frequency, i.amount]));
-    saveFile('cashbook-income-' + todayISO() + '.csv', toCSV(rows));
-  }
   function exportBackup() {
     const out = { app: 'household-cashbook', version: 1, exported: new Date().toISOString(), docs: Object.fromEntries(docs) };
     saveFile('cashbook-backup-' + todayISO() + '.json', JSON.stringify(out, null, 2));
@@ -1394,6 +2155,7 @@ input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); ou
     b.addEventListener('click', function () { go(b.dataset.tab); });
   });
   document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape' && ui.editor) requestDiscard(); });
+  checkLockAvailable();
   renderHeader();
   renderMain();
   initStore();
