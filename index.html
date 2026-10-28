@@ -33,6 +33,12 @@ body { margin: 0; }
   --warn-soft: #FBF1D9;
   --neg: #B3362C;
   --neg-soft: #FBE7E4;
+  --viz-income: #2a78d6;
+  --viz-spend: #eb6834;
+  --viz-budget: #1baf7a;
+  --viz-pos: #2a78d6;
+  --viz-neg: #e34948;
+  --viz-axis: #B4BEC7;
   --f-display: 'Familjen Grotesk', 'Helvetica Neue', Arial, sans-serif;
   --f-body: 'Hanken Grotesk', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --f-num: 'Spline Sans Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
@@ -42,6 +48,7 @@ body { margin: 0; }
     --bg: #0E151B; --surface: #15202A; --ink: #E6EDF2; --muted: #9AABB8; --rule: #263644; --line: #587082;
     --accent: #5AA2F0; --accent-ink: #0A1722; --accent-soft: #16304A;
     --pos: #4CC38A; --warn: #F0C04F; --warn-fill: #E3B04B; --warn-soft: #33290F; --neg: #F28B80; --neg-soft: #3A1B19;
+    --viz-income: #3987e5; --viz-spend: #d95926; --viz-budget: #199e70; --viz-pos: #3987e5; --viz-neg: #e66767; --viz-axis: #3A4C5A;
     color-scheme: dark;
   }
 }
@@ -49,6 +56,7 @@ body { margin: 0; }
   --bg: #0E151B; --surface: #15202A; --ink: #E6EDF2; --muted: #9AABB8; --rule: #263644; --line: #587082;
   --accent: #5AA2F0; --accent-ink: #0A1722; --accent-soft: #16304A;
   --pos: #4CC38A; --warn: #F0C04F; --warn-fill: #E3B04B; --warn-soft: #33290F; --neg: #F28B80; --neg-soft: #3A1B19;
+  --viz-income: #3987e5; --viz-spend: #d95926; --viz-budget: #199e70; --viz-pos: #3987e5; --viz-neg: #e66767; --viz-axis: #3A4C5A;
   color-scheme: dark;
 }
 
@@ -189,6 +197,61 @@ input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); ou
 .prompt { margin-bottom: 16px; padding: 16px; border: 2px solid var(--warn-fill); background: var(--warn-soft); border-radius: 10px; display: grid; gap: 10px; }
 .prompt strong { font-family: var(--f-display); font-size: 18px; }
 
+/* charts */
+.chart { display: grid; gap: 0; }
+.chart-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.chart h3 { font-size: 18px; font-weight: 700; }
+.chart-sub { font-size: 14px; color: var(--muted); margin-top: 2px; overflow-wrap: anywhere; max-width: 60ch; }
+.tog-group, .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; max-width: 100%; }
+.tog, .seg button { min-height: 36px; padding: 0 12px; background: var(--surface); border: 0; font-weight: 600; font-size: 13px; cursor: pointer; color: var(--muted); }
+.tog + .tog, .seg button + button { border-left: 1px solid var(--line); }
+.tog[aria-pressed="true"], .seg button[aria-pressed="true"] { background: var(--accent-soft); color: var(--ink); }
+.tog:focus-visible, .seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.legend { display: flex; gap: 6px 16px; flex-wrap: wrap; margin: 12px 0 8px; font-size: 13px; color: var(--ink); }
+.lg { display: inline-flex; align-items: center; gap: 6px; }
+.lg-key { display: inline-block; flex: none; }
+.lg-key.rect { width: 12px; height: 12px; border-radius: 3px; }
+.lg-key.line { width: 16px; height: 0; border-top: 3px solid; border-radius: 2px; }
+.k-income { background: var(--viz-income); border-color: var(--viz-income); }
+.k-spend { background: var(--viz-spend); border-color: var(--viz-spend); }
+.k-budget { background: var(--viz-budget); border-color: var(--viz-budget); }
+.k-pos { background: var(--viz-pos); border-color: var(--viz-pos); }
+.k-neg { background: var(--viz-neg); border-color: var(--viz-neg); }
+.unit { margin-left: auto; color: var(--muted); }
+.chart-host { position: relative; min-width: 0; }
+.plot { display: block; max-width: 100%; overflow: visible; outline: none; touch-action: pan-y; }
+.plot:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.plot .grid { stroke: var(--rule); stroke-width: 1; }
+.plot .axisline { stroke: var(--viz-axis); stroke-width: 1; }
+.plot .cross { stroke: var(--viz-axis); stroke-width: 1; }
+.plot .tick { fill: var(--muted); font: 11px var(--f-body); font-variant-numeric: tabular-nums; }
+.plot .xl { fill: var(--muted); font: 12px var(--f-body); }
+.plot .lbl { fill: var(--ink); font: 600 12px var(--f-body); paint-order: stroke; stroke: var(--surface); stroke-width: 4px; stroke-linejoin: round; }
+.plot .hit { fill: transparent; }
+.plot .m-income { fill: var(--viz-income); }
+.plot .m-spend { fill: var(--viz-spend); }
+.plot .n-pos { fill: var(--viz-pos); }
+.plot .n-neg { fill: var(--viz-neg); }
+.plot .ln { fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.plot .ln-spend { stroke: var(--viz-spend); }
+.plot .ln-budget { stroke: var(--viz-budget); }
+.plot .ln-income { stroke: var(--viz-income); }
+.plot .wash { fill: var(--viz-spend); opacity: 0.1; }
+.plot .dot-spend { fill: var(--viz-spend); stroke: var(--surface); stroke-width: 2; }
+.tip { position: absolute; top: 0; z-index: 3; pointer-events: none; min-width: 160px; max-width: 260px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 13px; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.16); }
+.tip-t { font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 4px; }
+.tip-row { display: flex; align-items: center; gap: 8px; padding: 1px 0; }
+.tip-l { flex: 1; color: var(--muted); }
+.tip-v { font-weight: 700; color: var(--ink); }
+.tbl-wrap { overflow-x: auto; margin-top: 8px; }
+.tbl { border-collapse: collapse; width: 100%; font-size: 14px; }
+.tbl caption { text-align: left; font-size: 13px; color: var(--muted); padding: 4px 0 8px; }
+.tbl th, .tbl td { padding: 8px 10px; border-top: 1px solid var(--rule); text-align: right; white-space: nowrap; font-weight: 500; }
+.tbl thead th { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 700; }
+.tbl th:first-child { text-align: left; }
+.tbl tbody th { font-weight: 600; }
+.trend-stack { display: grid; gap: 16px; }
+
 /* loading */
 .loading { display: grid; gap: 12px; }
 .sk { height: 14px; border-radius: 7px; background: var(--rule); }
@@ -245,7 +308,7 @@ input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); ou
   let lsOk = true;
   let lsWarned = false;
   let toastTimer = null;
-  const ui = { tab: 'overview', editor: null, jPeriod: 'month', jCat: '' };
+  const ui = { tab: 'overview', editor: null, jPeriod: 'month', jCat: '', trendMonths: 6 };
   const fmts = {};
 
   const $ = (id) => document.getElementById(id);
@@ -486,6 +549,373 @@ input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); ou
       'This browser is not letting the app save entries, so they will be lost when you close it. Open the app from your Home Screen icon, or check Safari privacy settings.');
   }
 
+  /* ---------- charts ---------- */
+  const SVGNS = 'http://www.w3.org/2000/svg';
+  function S(tag, attrs, ...kids) {
+    const el = document.createElementNS(SVGNS, tag);
+    if (attrs) { for (const k in attrs) { const v = attrs[k]; if (v == null || v === false) continue; el.setAttribute(k, v); } }
+    for (const kid of kids.flat(Infinity)) {
+      if (kid == null || kid === false) continue;
+      el.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
+    }
+    return el;
+  }
+
+  let compactFmt = null;
+  function compact(n) {
+    try {
+      compactFmt = compactFmt || new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 });
+      return compactFmt.format(n);
+    } catch (e) { return String(Math.round(n)); }
+  }
+
+  function niceTicks(min, max, count) {
+    if (!(max > min)) max = min + 1;
+    const raw = (max - min) / count;
+    const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    const norm = raw / mag;
+    const step = (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 2.5 ? 2.5 : norm <= 5 ? 5 : 10) * mag;
+    const lo = Math.floor(min / step) * step;
+    const hi = Math.ceil(max / step) * step;
+    const ticks = [];
+    for (let v = lo; v <= hi + step / 2; v += step) ticks.push(+v.toFixed(10));
+    return { ticks: ticks, lo: lo, hi: hi };
+  }
+
+  const PM = { l: 46, r: 12, t: 14, b: 28 };
+  function makePlot(width, height, vmin, vmax, label) {
+    const nt = niceTicks(Math.min(0, vmin), vmax, 4);
+    const x0 = PM.l, x1 = width - PM.r, yTop = PM.t, yBot = height - PM.b;
+    const y = function (v) { return yBot - (v - nt.lo) / (nt.hi - nt.lo) * (yBot - yTop); };
+    const svg = S('svg', { viewBox: '0 0 ' + width + ' ' + height, width: width, height: height, role: 'img', tabindex: '0', class: 'plot', 'aria-label': label });
+    nt.ticks.forEach(function (t) {
+      svg.append(S('line', { x1: x0, x2: x1, y1: y(t), y2: y(t), class: t === 0 ? 'axisline' : 'grid' }));
+      svg.append(S('text', { x: x0 - 8, y: y(t) + 4, 'text-anchor': 'end', class: 'tick' }, compact(t)));
+    });
+    return { svg: svg, x0: x0, x1: x1, yTop: yTop, yBot: yBot, y: y };
+  }
+
+  // a column anchored on the baseline, 4px rounded at the data end
+  function colPath(x, base, w, hgt, up, r) {
+    if (!(hgt > 0.5)) return '';
+    r = Math.min(r, w / 2, hgt);
+    const e = up ? base - hgt : base + hgt;
+    const k = up ? r : -r;
+    return 'M' + x + ' ' + base + 'V' + (e + k) + 'Q' + x + ' ' + e + ' ' + (x + r) + ' ' + e + 'H' + (x + w - r) + 'Q' + (x + w) + ' ' + e + ' ' + (x + w) + ' ' + (e + k) + 'V' + base + 'Z';
+  }
+
+  function tipFor(host) {
+    const tip = h('div', { class: 'tip', hidden: true });
+    host.append(tip);
+    return {
+      show: function (cx, title, rows) {
+        const kids = rows.map(function (r) {
+          return h('div', { class: 'tip-row' }, r.key ? h('i', { class: 'lg-key ' + r.key }) : null, h('span', { class: 'tip-l' }, r.label), h('span', { class: 'num tip-v' }, r.value));
+        });
+        tip.replaceChildren.apply(tip, [h('div', { class: 'tip-t' }, title)].concat(kids));
+        tip.hidden = false;
+        const w = tip.offsetWidth;
+        tip.style.left = Math.max(0, Math.min(host.clientWidth - w, cx - w / 2)) + 'px';
+      },
+      hide: function () { tip.hidden = true; }
+    };
+  }
+
+  function wireHover(svg, count, idxFromX, show, hide) {
+    let active = -1;
+    const at = function (ev) {
+      const i = idxFromX(ev.clientX - svg.getBoundingClientRect().left);
+      if (i < 0) { active = -1; hide(); } else if (i !== active) { active = i; show(i); }
+    };
+    svg.addEventListener('pointermove', at);
+    svg.addEventListener('pointerdown', at);
+    svg.addEventListener('pointerleave', function (ev) { if (ev.pointerType === 'mouse') { active = -1; hide(); } });
+    svg.addEventListener('keydown', function (ev) {
+      if (ev.key !== 'ArrowLeft' && ev.key !== 'ArrowRight') return;
+      ev.preventDefault();
+      active = active < 0 ? count - 1 : Math.max(0, Math.min(count - 1, active + (ev.key === 'ArrowRight' ? 1 : -1)));
+      show(active);
+    });
+    svg.addEventListener('blur', function () { active = -1; hide(); });
+  }
+
+  function buildTable(t) {
+    return h('table', { class: 'tbl' },
+      h('caption', null, t.caption),
+      h('thead', null, h('tr', null, t.head.map(function (x) { return h('th', { scope: 'col' }, x); }))),
+      h('tbody', null, t.rows.map(function (r) {
+        return h('tr', null, r.map(function (c, i) { return i === 0 ? h('th', { scope: 'row' }, c) : h('td', { class: 'num' }, c); }));
+      })));
+  }
+
+  // cfg: { title, sub, legend:[{kind,cls,label}], draw(host,width), table:{caption,head,rows} }
+  function chartCard(cfg) {
+    const host = h('div', { class: 'chart-host' });
+    const tblWrap = h('div', { class: 'tbl-wrap', hidden: true }, buildTable(cfg.table));
+    const bChart = h('button', { type: 'button', class: 'tog', 'aria-pressed': 'true' }, 'Chart');
+    const bTable = h('button', { type: 'button', class: 'tog', 'aria-pressed': 'false' }, 'Table');
+    let lastW = 0;
+    function redraw() {
+      const w = Math.floor(host.clientWidth);
+      if (w < 120 || host.hidden) return;
+      lastW = w;
+      host.replaceChildren();
+      cfg.draw(host, w);
+    }
+    function setView(table) {
+      host.hidden = table; tblWrap.hidden = !table;
+      bChart.setAttribute('aria-pressed', String(!table));
+      bTable.setAttribute('aria-pressed', String(table));
+      if (!table) redraw();
+    }
+    bChart.addEventListener('click', function () { setView(false); });
+    bTable.addEventListener('click', function () { setView(true); });
+    if (window.ResizeObserver) {
+      new ResizeObserver(function () { if (Math.floor(host.clientWidth) !== lastW) redraw(); }).observe(host);
+    } else { window.addEventListener('resize', redraw); }
+    requestAnimationFrame(redraw);
+    return h('section', { class: 'card chart' },
+      h('div', { class: 'chart-head' },
+        h('div', null, h('h3', null, cfg.title), h('p', { class: 'chart-sub' }, cfg.sub)),
+        h('div', { class: 'tog-group' }, bChart, bTable)),
+      h('div', { class: 'legend' }, cfg.legend.map(function (it) {
+        return h('span', { class: 'lg' }, h('i', { class: 'lg-key ' + it.kind + ' ' + it.cls }), it.label);
+      }), h('span', { class: 'unit' }, currency)),
+      host, tblWrap);
+  }
+
+  function allBudget(bud) { return bud.find(function (b) { return b.category === 'All' && b.period === 'monthly'; }) || null; }
+
+  function monthSeries(n, inc, exp) {
+    const out = [], now = new Date();
+    for (let k = n - 1; k >= 0; k--) {
+      const ref = new Date(now.getFullYear(), now.getMonth() - k, 1);
+      const r = periodRange('monthly', ref);
+      const income = incomeForRange(inc, r);
+      const spent = sum(exp.filter(function (e) { return inR(e.date, r); }));
+      out.push({ income: income, spent: spent, net: income - spent,
+        label: ref.toLocaleDateString(undefined, { month: 'short' }),
+        full: ref.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }) });
+    }
+    let first = out.findIndex(function (m) { return m.income > 0 || m.spent > 0; });
+    if (first < 0) first = out.length - 1;
+    return out.slice(Math.min(first, Math.max(0, out.length - 3)));
+  }
+
+  /* chart 1: this month's pace */
+  function paceCard(inc, exp, bud, monthIncome) {
+    const now = new Date(), mr = periodRange('monthly', now);
+    const days = mr.endDate.getDate(), today = now.getDate();
+    const perDay = new Array(days).fill(0);
+    exp.filter(function (e) { return inR(e.date, mr); }).forEach(function (e) { perDay[parseISO(e.date).getDate() - 1] += e.amount; });
+    const cum = []; let t = 0;
+    for (let i = 0; i < today; i++) { t += perDay[i]; cum.push(t); }
+    const budget = allBudget(bud);
+    const kind = budget ? 'budget' : 'income';
+    const limit = budget ? budget.amount : (monthIncome > 0 ? monthIncome : 0);
+    if (!t && !limit) return null;
+    const d = { days: days, today: today, cum: cum, limit: limit, kind: kind, month: mr.startDate.toLocaleDateString(undefined, { month: 'long' }) };
+    const paceNow = limit * today / days;
+    const sub = 'Day ' + today + ' of ' + days + '. Spent ' + money(t) + (kind === 'budget'
+      ? '; an even pace through your ' + money(limit) + ' budget would be ' + money(paceNow) + '.'
+      : ' of the ' + money(limit) + ' income counted this month.');
+    const rows = cum.map(function (v, i) { return [String(i + 1), money(v), limit ? money(kind === 'budget' ? limit * (i + 1) / days : limit) : '-']; });
+    return chartCard({
+      title: kind === 'budget' ? 'Spending against your budget' : 'Spending against income',
+      sub: sub,
+      legend: [{ kind: 'line', cls: 'k-spend', label: 'Spent so far' }].concat(limit ? [kind === 'budget' ? { kind: 'line', cls: 'k-budget', label: 'Budget pace' } : { kind: 'line', cls: 'k-income', label: 'Income this month' }] : []),
+      draw: function (host, width) { drawPace(host, width, d); },
+      table: { caption: 'Cumulative spending by day, ' + d.month, head: ['Day', 'Spent so far', kind === 'budget' ? 'Budget pace' : 'Income'], rows: rows }
+    });
+  }
+
+  function drawPace(host, width, d) {
+    const N = d.days, last = d.cum.length ? d.cum[d.cum.length - 1] : 0;
+    const p = makePlot(width, 230, 0, Math.max(d.limit, last, 1) * 1.08, 'Cumulative spending in ' + d.month + ': ' + money(last) + ' by day ' + d.today + (d.limit ? ', compared with ' + money(d.limit) : ''));
+    const xd = function (day) { return p.x0 + (N === 1 ? 0 : (day - 1) / (N - 1) * (p.x1 - p.x0)); };
+    const lim = function (day) { return d.kind === 'budget' ? d.limit * day / N : d.limit; };
+    const ticks = [];
+    for (let k = 1; k <= N; k += 7) ticks.push(k);
+    if (N - ticks[ticks.length - 1] >= 3) ticks.push(N);
+    ticks.forEach(function (k) { p.svg.append(S('text', { x: xd(k), y: p.yBot + 18, 'text-anchor': 'middle', class: 'xl' }, k)); });
+
+    const cross = S('line', { y1: p.yTop, y2: p.yBot, class: 'cross', visibility: 'hidden' });
+    p.svg.append(cross);
+    if (d.limit > 0) {
+      p.svg.append(S('line', { x1: xd(1), y1: p.y(lim(1)), x2: xd(N), y2: p.y(lim(N)), class: 'ln ' + (d.kind === 'budget' ? 'ln-budget' : 'ln-income') }));
+      p.svg.append(S('text', { x: p.x1, y: p.y(lim(N)) - 8, 'text-anchor': 'end', class: 'lbl' }, (d.kind === 'budget' ? 'Budget ' : 'Income ') + money(d.limit)));
+    }
+    const pts = d.cum.map(function (v, i) { return [xd(i + 1), p.y(v)]; });
+    const hot = S('circle', { r: 5, class: 'dot-spend', visibility: 'hidden' });
+    if (pts.length) {
+      const path = 'M' + pts.map(function (q) { return q[0] + ' ' + q[1]; }).join('L');
+      const end = pts[pts.length - 1];
+      p.svg.append(S('path', { d: path + 'L' + end[0] + ' ' + p.yBot + 'L' + pts[0][0] + ' ' + p.yBot + 'Z', class: 'wash' }));
+      p.svg.append(S('path', { d: path, class: 'ln ln-spend' }));
+      p.svg.append(S('circle', { cx: end[0], cy: end[1], r: 5, class: 'dot-spend' }));
+      let ly = end[1] - 12, anchor = 'end', lx = end[0] - 8;
+      if (end[0] < p.x0 + 110) { anchor = 'start'; lx = end[0] + 8; }
+      if (d.limit > 0 && Math.abs(ly - (p.y(lim(N)) - 8)) < 16 && end[0] > p.x1 - 160) ly = end[1] + 22;
+      p.svg.append(S('text', { x: lx, y: ly, 'text-anchor': anchor, class: 'lbl' }, money(last)));
+    }
+    p.svg.append(hot);
+
+    const tip = tipFor(host);
+    const hide = function () { cross.setAttribute('visibility', 'hidden'); hot.setAttribute('visibility', 'hidden'); tip.hide(); };
+    const show = function (i) {
+      const day = i + 1, x = xd(day);
+      cross.setAttribute('x1', x); cross.setAttribute('x2', x); cross.setAttribute('visibility', 'visible');
+      const rows = [];
+      if (day <= d.today) {
+        hot.setAttribute('cx', x); hot.setAttribute('cy', p.y(d.cum[i])); hot.setAttribute('visibility', 'visible');
+        rows.push({ key: 'line k-spend', label: 'Spent so far', value: money(d.cum[i]) });
+      } else { hot.setAttribute('visibility', 'hidden'); }
+      if (d.limit > 0) rows.push({ key: 'line ' + (d.kind === 'budget' ? 'k-budget' : 'k-income'), label: d.kind === 'budget' ? 'Budget pace' : 'Income', value: money(lim(day)) });
+      if (d.kind === 'budget' && day <= d.today) {
+        const diff = d.cum[i] - lim(day);
+        rows.push({ label: diff > 0 ? 'Over pace by' : 'Under pace by', value: money(Math.abs(diff)) });
+      }
+      tip.show(x, d.month + ' ' + day, rows);
+    };
+    wireHover(p.svg, N, function (px) {
+      if (px < p.x0 - 8 || px > p.x1 + 8) return -1;
+      return Math.max(0, Math.min(N - 1, Math.round((px - p.x0) / (p.x1 - p.x0) * (N - 1))));
+    }, show, hide);
+    host.prepend(p.svg);
+  }
+
+  /* chart 2: income, spending and budget by month */
+  function monthsCard(months, budget) {
+    const limit = budget ? budget.amount : 0;
+    const m = months[months.length - 1];
+    let sub = m.full + ': income ' + money(m.income) + ', spent ' + money(m.spent);
+    if (limit) sub += (m.spent > limit ? ', over the ' + money(limit) + ' budget by ' + money(m.spent - limit) : ', within the ' + money(limit) + ' budget');
+    sub += '.';
+    const d = { months: months, limit: limit };
+    return chartCard({
+      title: 'Income and spending by month',
+      sub: sub,
+      legend: [{ kind: 'rect', cls: 'k-income', label: 'Income' }, { kind: 'rect', cls: 'k-spend', label: 'Spending' }].concat(limit ? [{ kind: 'line', cls: 'k-budget', label: 'Monthly budget' }] : []),
+      draw: function (host, width) { drawMonths(host, width, d); },
+      table: {
+        caption: 'Income, spending and budget by month',
+        head: ['Month', 'Income', 'Spending', 'Left'].concat(limit ? ['Budget'] : []),
+        rows: months.map(function (x) {
+          return [x.full, money(x.income), money(x.spent), money(x.net)].concat(limit ? [x.spent > limit ? 'Over by ' + money(x.spent - limit) : 'Within budget'] : []);
+        })
+      }
+    });
+  }
+
+  function drawMonths(host, width, d) {
+    const ms = d.months, n = ms.length;
+    const top = Math.max.apply(null, ms.map(function (x) { return Math.max(x.income, x.spent); }).concat([d.limit || 0, 1]));
+    const p = makePlot(width, 250, 0, top * 1.08, 'Income and spending for the last ' + n + ' months');
+    const band = (p.x1 - p.x0) / n;
+    const bw = Math.max(5, Math.min(24, (band - 12) / 2 - 1));
+    const step = band < 30 ? 2 : 1;
+    const groups = [];
+    ms.forEach(function (x, i) {
+      const cx = p.x0 + band * (i + 0.5);
+      const bi = S('path', { d: colPath(cx - 1 - bw, p.yBot, bw, p.yBot - p.y(x.income), true, 4), class: 'm-income' });
+      const bs = S('path', { d: colPath(cx + 1, p.yBot, bw, p.yBot - p.y(x.spent), true, 4), class: 'm-spend' });
+      p.svg.append(bi, bs);
+      groups.push([bi, bs]);
+      if ((n - 1 - i) % step === 0) p.svg.append(S('text', { x: cx, y: p.yBot + 18, 'text-anchor': 'middle', class: 'xl' }, x.label));
+    });
+    if (d.limit > 0) {
+      p.svg.append(S('line', { x1: p.x0, x2: p.x1, y1: p.y(d.limit), y2: p.y(d.limit), class: 'ln ln-budget' }));
+      p.svg.append(S('text', { x: p.x0 + 4, y: p.y(d.limit) - 8, class: 'lbl' }, 'Budget ' + money(d.limit)));
+    }
+    const tip = tipFor(host);
+    const hide = function () { groups.forEach(function (g) { g.forEach(function (b) { b.style.opacity = ''; }); }); tip.hide(); };
+    const show = function (i) {
+      groups.forEach(function (g, j) { g.forEach(function (b) { b.style.opacity = j === i ? '1' : '0.45'; }); });
+      const x = ms[i];
+      const rows = [
+        { key: 'rect k-income', label: 'Income', value: money(x.income) },
+        { key: 'rect k-spend', label: 'Spending', value: money(x.spent) },
+        { label: x.net >= 0 ? 'Left over' : 'Overspent by', value: money(Math.abs(x.net)) }
+      ];
+      if (d.limit > 0) rows.push({ key: 'line k-budget', label: x.spent > d.limit ? 'Over budget by' : 'Under budget by', value: money(Math.abs(x.spent - d.limit)) });
+      tip.show(p.x0 + band * (i + 0.5), x.full, rows);
+    };
+    wireHover(p.svg, n, function (px) {
+      const i = Math.floor((px - p.x0) / band);
+      return (px < p.x0 || i < 0 || i >= n) ? -1 : i;
+    }, show, hide);
+    host.prepend(p.svg);
+  }
+
+  /* chart 3: what is left each month */
+  function netCard(months) {
+    const withData = months.filter(function (x) { return x.income > 0 || x.spent > 0; });
+    const avg = withData.length ? withData.reduce(function (t, x) { return t + x.net; }, 0) / withData.length : 0;
+    const d = { months: months };
+    return chartCard({
+      title: 'Left over each month',
+      sub: 'Income minus spending. On average ' + money(avg) + ' a month over the months shown.',
+      legend: [{ kind: 'rect', cls: 'k-pos', label: 'Left over' }, { kind: 'rect', cls: 'k-neg', label: 'Overspent' }],
+      draw: function (host, width) { drawNet(host, width, d); },
+      table: {
+        caption: 'Income minus spending by month',
+        head: ['Month', 'Left', 'Result'],
+        rows: months.map(function (x) { return [x.full, money(x.net), x.net >= 0 ? 'Left over' : 'Overspent']; })
+      }
+    });
+  }
+
+  function drawNet(host, width, d) {
+    const ms = d.months, n = ms.length;
+    const vals = ms.map(function (x) { return x.net; }).concat([0]);
+    const vmin = Math.min.apply(null, vals), vmax = Math.max.apply(null, vals);
+    const pad = (vmax - vmin) * 0.06;
+    const p = makePlot(width, 200, vmin < 0 ? vmin - pad : 0, vmax + pad, 'Income minus spending for the last ' + n + ' months');
+    const band = (p.x1 - p.x0) / n;
+    const bw = Math.max(6, Math.min(24, band - 12));
+    const step = band < 30 ? 2 : 1;
+    const zero = p.y(0), bars = [];
+    ms.forEach(function (x, i) {
+      const cx = p.x0 + band * (i + 0.5);
+      const up = x.net >= 0;
+      const hgt = up ? zero - p.y(x.net) : p.y(x.net) - zero;
+      const b = S('path', { d: colPath(cx - bw / 2, zero, bw, hgt, up, 4), class: up ? 'n-pos' : 'n-neg' });
+      p.svg.append(b); bars.push(b);
+      if ((n - 1 - i) % step === 0) p.svg.append(S('text', { x: cx, y: p.yBot + 18, 'text-anchor': 'middle', class: 'xl' }, x.label));
+    });
+    const tip = tipFor(host);
+    const hide = function () { bars.forEach(function (b) { b.style.opacity = ''; }); tip.hide(); };
+    const show = function (i) {
+      bars.forEach(function (b, j) { b.style.opacity = j === i ? '1' : '0.45'; });
+      const x = ms[i];
+      tip.show(p.x0 + band * (i + 0.5), x.full, [
+        { key: 'rect ' + (x.net >= 0 ? 'k-pos' : 'k-neg'), label: x.net >= 0 ? 'Left over' : 'Overspent by', value: money(Math.abs(x.net)) },
+        { label: 'Income', value: money(x.income) },
+        { label: 'Spending', value: money(x.spent) }
+      ]);
+    };
+    wireHover(p.svg, n, function (px) {
+      const i = Math.floor((px - p.x0) / band);
+      return (px < p.x0 || i < 0 || i >= n) ? -1 : i;
+    }, show, hide);
+    host.prepend(p.svg);
+  }
+
+  function trendsSection(inc, exp, bud) {
+    const sec = h('section', null, h('div', { class: 'section-head' }, h('h2', null, 'Trends')));
+    if (!inc.length && !exp.length) {
+      sec.append(h('div', { class: 'card empty' }, h('p', null, 'Charts appear once you add income or expenses.')));
+      return sec;
+    }
+    const seg = h('div', { class: 'seg', role: 'group', 'aria-label': 'Months shown' }, [3, 6, 12].map(function (n) {
+      return h('button', { type: 'button', 'aria-pressed': String(ui.trendMonths === n), onclick: function () { ui.trendMonths = n; renderMain(); } }, 'Last ' + n + ' months');
+    }));
+    sec.append(h('div', { class: 'filters' }, seg));
+    const months = monthSeries(ui.trendMonths, inc, exp);
+    sec.append(h('div', { class: 'trend-stack' }, monthsCard(months, allBudget(bud)), netCard(months)));
+    return sec;
+  }
+
   /* ---------- views ---------- */
   function viewOverview() {
     const exp = listKind('expense'), inc = listKind('income'), bud = listKind('budget');
@@ -506,6 +936,9 @@ input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); ou
         line('Spent', null, money(spent), ''),
         line('Left', null, money(left), left < 0 ? 'neg' : '', true))));
 
+    const pace = paceCard(inc, exp, bud, monthIncome);
+    if (pace) wrap.append(pace);
+
     const bsec = h('section', null,
       h('div', { class: 'section-head' }, h('h2', null, 'Budgets'),
         h('button', { type: 'button', class: 'btn small', onclick: function () { go('budgets'); } }, 'Manage budgets')));
@@ -518,6 +951,7 @@ input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); ou
       bsec.append(h('div', { class: 'grid' }, sorted.map((b) => budgetCard(b, exp))));
     }
     wrap.append(bsec);
+    wrap.append(trendsSection(inc, exp, bud));
 
     const by = new Map();
     monthExp.forEach(function (e) {

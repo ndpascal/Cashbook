@@ -1,4 +1,4 @@
-const CACHE = 'cashbook-v1';
+const CACHE = 'cashbook-v2';
 const CORE = ['./', 'index.html', 'manifest.webmanifest', 'icon-180.png', 'icon-512.png'];
 
 self.addEventListener('install', function (e) {
