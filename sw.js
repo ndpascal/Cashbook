@@ -1,4 +1,4 @@
-const CACHE = 'cashbook-v3';
+const CACHE = 'cashbook-v4';
 const CORE = ['./', 'index.html', 'firebase-config.js', 'manifest.webmanifest', 'icon-180.png', 'icon-512.png', 'lib-firebase.js', 'lib-pdf.js', 'lib-xlsx.js'];
 
 self.addEventListener('install', function (e) {

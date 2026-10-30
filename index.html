@@ -252,6 +252,55 @@ input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); ou
 .tbl tbody th { font-weight: 600; }
 .trend-stack { display: grid; gap: 16px; }
 
+/* statement: two "left" lines */
+.line.sub-total { margin-top: 0; padding-top: 0; border-top: 0; }
+.line.sub-total dd { font-size: 20px; border-bottom: 0; }
+.line .na { color: var(--muted); font-weight: 500; font-size: 15px; }
+
+/* category tree */
+.tree { padding: 0; overflow: hidden; }
+.tree-head, .t-row { display: grid; grid-template-columns: minmax(0, 1fr) repeat(3, minmax(64px, 112px)); gap: 4px 12px; align-items: center; }
+.tree-head { padding: 10px 16px; background: var(--bg); border-bottom: 1px solid var(--rule); font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.tree-head span:not(:first-child), .t-row .num { text-align: right; }
+.tree details > summary { list-style: none; cursor: pointer; }
+.tree details > summary::-webkit-details-marker { display: none; }
+.tree summary:focus-visible, .t-leaf:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.t-row { padding: 10px 16px; border-top: 1px solid var(--rule); min-height: 52px; }
+.tree > details:first-of-type > summary .t-row { border-top: 0; }
+.t-row:hover { background: var(--accent-soft); }
+.t-name { display: grid; gap: 4px; min-width: 0; }
+.t-title { display: flex; align-items: center; gap: 8px; font-weight: 600; min-width: 0; }
+.t-title > span:last-child { overflow-wrap: anywhere; }
+.caret { flex: none; width: 18px; height: 18px; display: inline-grid; place-items: center; color: var(--muted); transition: transform 0.15s ease; }
+details[open] > summary .caret { transform: rotate(90deg); }
+.t-meta { font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.t-bar { height: 6px; background: var(--rule); border-radius: 3px; overflow: hidden; max-width: 320px; }
+.t-bar > i { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+.t-bar.warn > i { background: var(--warn-fill); }
+.t-bar.over > i { background: var(--neg); }
+.t-cat > summary .t-title { font-family: var(--f-display); font-size: 17px; font-weight: 700; }
+.t-sub .t-row { padding-left: 42px; background: color-mix(in srgb, var(--bg) 45%, var(--surface)); }
+.t-sub .t-row:hover { background: var(--accent-soft); }
+.t-leaf { display: grid; grid-template-columns: minmax(0, 1fr) repeat(3, minmax(64px, 112px)); gap: 4px 12px; align-items: center; width: 100%; text-align: left; background: none; border: 0; border-top: 1px dashed var(--rule); padding: 9px 16px 9px 68px; min-height: 44px; cursor: pointer; font-size: 15px; }
+.t-cat > .t-leaf { padding-left: 42px; }
+.t-leaf:hover { background: var(--accent-soft); }
+.t-leaf .num { text-align: right; color: var(--muted); }
+.t-leaf .when { color: var(--muted); font-size: 13px; margin-right: 8px; font-family: var(--f-num); }
+.t-foot { padding: 12px 16px; border-top: 1px solid var(--ink); font-weight: 700; }
+.t-none { color: var(--muted); font-weight: 500; }
+@media (max-width: 560px) {
+  .tree-head, .t-row, .t-leaf { grid-template-columns: minmax(0, 1fr) repeat(2, auto); }
+  .tree-head .c-budget, .t-row .c-budget, .t-leaf .c-budget { display: none; }
+  .t-sub .t-row { padding-left: 28px; }
+  .t-leaf { padding-left: 44px; }
+}
+@media (prefers-reduced-motion: reduce) { .caret { transition: none; } }
+.cat-group { display: grid; gap: 10px; }
+.cat-group + .cat-group { margin-top: 20px; }
+.cat-group-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+.cat-group-head h3 { font-size: 19px; }
+.cat-group-head .muted { font-size: 14px; }
+
 /* sign-in, lock */
 .gate { max-width: 440px; margin: 8px auto 0; }
 .gate .card { padding: 24px 20px; }
@@ -335,7 +384,7 @@ input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); ou
   let lsOk = true;
   let lsWarned = false;
   let toastTimer = null;
-  const ui = { tab: 'overview', editor: null, jPeriod: 'month', jCat: '', trendMonths: 6, xPeriod: 'month', xFrom: '', xTo: '' };
+  const ui = { tab: 'overview', editor: null, jPeriod: 'month', jCat: '', trendMonths: 6, xPeriod: 'month', xFrom: '', xTo: '', treeOpen: new Set() };
 
   // account + lock state
   const FB = window.CASHBOOK_FIREBASE || {};
@@ -653,17 +702,65 @@ input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); ou
   }
 
   /* ---------- shared view pieces ---------- */
+  const low = (s) => String(s || '').trim().toLowerCase();
+  const subOf = (d) => (d && typeof d.sub === 'string' ? d.sub.trim() : '');
+  const SEP = ' › ';
+  const catPath = (d, sep) => (d.category || 'Other') + (subOf(d) ? (sep || SEP) + subOf(d) : '');
+  const budgetName = (b) => b.category === 'All' ? 'All spending' : catPath(b);
+
+  function subcategories(cat) {
+    const seen = new Map(), k = low(cat);
+    docs.forEach(function (d) {
+      if (d && (d.kind === 'expense' || d.kind === 'budget') && low(d.category) === k && subOf(d)) {
+        const s = subOf(d);
+        if (!seen.has(low(s))) seen.set(low(s), s);
+      }
+    });
+    return Array.from(seen.values()).sort((a, b) => a.localeCompare(b));
+  }
+
+  function budgetMatches(b, e) {
+    if (low(b.category || 'All') === 'all') return true;
+    if (low(e.category) !== low(b.category)) return false;
+    return !subOf(b) || low(subOf(e)) === low(subOf(b));
+  }
+
   function budgetStats(b, exp) {
     const r = periodRange(b.period, new Date());
-    const cat = (b.category || 'All').toLowerCase();
-    const spent = exp.filter((e) => inR(e.date, r) && (cat === 'all' || (e.category || '').toLowerCase() === cat)).reduce((t, e) => t + e.amount, 0);
+    const spent = exp.filter((e) => inR(e.date, r) && budgetMatches(b, e)).reduce((t, e) => t + e.amount, 0);
     const ratio = b.amount > 0 ? spent / b.amount : 0;
     return { r: r, spent: spent, ratio: ratio, left: b.amount - spent };
   }
 
+  // a budget's limit expressed for one calendar month
+  function perMonth(b, mr) {
+    const days = mr.endDate.getDate();
+    const f = { daily: days, weekly: days / 7, monthly: 1, quarterly: 1 / 3, yearly: 1 / 12 }[b.period] || 1;
+    return b.amount * f;
+  }
+
+  // Budget for the month: the "All spending" budget if there is one, otherwise the category budgets added up
+  function monthBudget(bud, mr) {
+    const all = bud.filter((b) => b.category === 'All');
+    if (all.length) {
+      const b = all.find((x) => x.period === 'monthly') || all[0];
+      return { amount: perMonth(b, mr), note: b.period === 'monthly' ? 'All spending' : 'All spending, ' + (PERIOD_TITLE[b.period] || '').toLowerCase() + ' × month' };
+    }
+    const cats = new Map();
+    bud.forEach(function (b) { const k = low(b.category); if (!cats.has(k)) cats.set(k, []); cats.get(k).push(b); });
+    let t = 0;
+    cats.forEach(function (list) { t += catBudgetAmount(list, mr); });
+    return cats.size ? { amount: t, note: 'sum of category budgets' } : null;
+  }
+  // a category's monthly budget: its own budget(s) if set, otherwise the sum of its sub-category budgets
+  function catBudgetAmount(list, mr) {
+    const own = list.filter((b) => !subOf(b));
+    return (own.length ? own : list).reduce((t, b) => t + perMonth(b, mr), 0);
+  }
+
   function budgetCard(b, exp) {
     const s = budgetStats(b, exp);
-    const name = b.category === 'All' ? 'All spending' : b.category;
+    const name = budgetName(b);
     const state = s.ratio >= 1 ? ' over' : s.ratio >= 0.8 ? ' warn' : '';
     const pct = Math.min(100, Math.round(s.ratio * 100));
     const status = s.left >= 0 ? money(s.left) + ' left · ' + Math.round(s.ratio * 100) + '% used' : 'Over by ' + money(-s.left);
@@ -1368,10 +1465,15 @@ input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); ou
     const byCat = new Map();
     exp.forEach(function (e) {
       const k = (e.category || 'Other').toLowerCase();
-      const c = byCat.get(k) || { name: e.category || 'Other', total: 0, count: 0 };
+      const c = byCat.get(k) || { name: e.category || 'Other', total: 0, count: 0, subs: new Map() };
       c.total += e.amount; c.count++; byCat.set(k, c);
+      const sk = low(subOf(e)) || '~';
+      const sc = c.subs.get(sk) || { name: subOf(e) || '(no sub-category)', total: 0, count: 0 };
+      sc.total += e.amount; sc.count++; c.subs.set(sk, sc);
     });
     const cats = Array.from(byCat.values()).sort((a, b) => b.total - a.total);
+    // sub-category rows, only for categories that use sub-categories
+    cats.forEach(function (c) { c.subList = (c.subs.size > 1 || !c.subs.has('~')) ? Array.from(c.subs.values()).sort((a, b) => b.total - a.total) : []; });
     const incRows = incAll.filter((i) => i.frequency === 'once' ? inR(i.date, r) : i.date < r.end).sort(byDateDesc).reverse()
       .map((i) => ({ i: i, counted: 0 }));
     // amount each income source contributes to the period (same rule as the monthly totals)
@@ -1522,12 +1624,18 @@ input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); ou
         ['Total', N(rd.income), N(rd.spent), N(rd.left)]);
     }
     if (rd.cats.length) {
-      table('Spending by category', ['Category', 'Entries', 'Amount', 'Share'], rd.cats.map((c) => [c.name, String(c.count), N(c.total), Math.round(c.total / (rd.spent || 1) * 100) + '%']), [1, 2, 3],
+      const pct = (v) => Math.round(v / (rd.spent || 1) * 100) + '%';
+      const catRows = [];
+      rd.cats.forEach(function (c) {
+        catRows.push([c.name, String(c.count), N(c.total), pct(c.total)]);
+        c.subList.forEach((s) => catRows.push(['      - ' + s.name, String(s.count), N(s.total), pct(s.total)]));
+      });
+      table('Spending by category', ['Category / sub-category', 'Entries', 'Amount', 'Share'], catRows, [1, 2, 3],
         ['Total', String(rd.exp.length), N(rd.spent), '100%']);
     }
     if (rd.budgets.length) {
       table('Budgets (current period, as of today)', ['Budget', 'Period', 'Limit', 'Spent', 'Status'], rd.budgets.map(function (x) {
-        return [x.b.category === 'All' ? 'All spending' : x.b.category, rangeLabel(x.b.period, x.s.r), N(x.b.amount), N(x.s.spent),
+        return [x.b.category === 'All' ? 'All spending' : catPath(x.b, ' / '), rangeLabel(x.b.period, x.s.r), N(x.b.amount), N(x.s.spent),
           x.s.left >= 0 ? N(x.s.left) + ' left (' + Math.round(x.s.ratio * 100) + '%)' : 'Over by ' + N(-x.s.left)];
       }), [2, 3, 4]);
     }
@@ -1535,7 +1643,7 @@ input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); ou
       table('Income', ['Date', 'Source', 'How often', 'Amount', 'Counted in period'], rd.incRows.map((x) => [fmtDate(x.i.date), x.i.title, FREQ_TITLE[x.i.frequency] || x.i.frequency, N(x.i.amount), N(x.counted)]), [3, 4],
         ['', '', '', 'Total', N(rd.income)]);
     }
-    table('Expenses', ['Date', 'Description', 'Category', 'Note', 'Amount'], rd.exp.length ? rd.exp.map((e) => [fmtDate(e.date), e.title, e.category, e.note || '', N(e.amount)]) : [['', 'No expenses in this period', '', '', '']], [4],
+    table('Expenses', ['Date', 'Description', 'Category', 'Note', 'Amount'], rd.exp.length ? rd.exp.map((e) => [fmtDate(e.date), e.title, catPath(e, ' / '), e.note || '', N(e.amount)]) : [['', 'No expenses in this period', '', '', '']], [4],
       ['', '', '', 'Total', N(rd.spent)]);
 
     const pages = doc.getNumberOfPages();
@@ -1574,14 +1682,18 @@ input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); ou
     const ws0 = wb.Sheets.Summary; ['B3', 'B4'].forEach(function (a) { ws0[a].z = 'dd mmm yyyy'; }); ws0.B11.z = '0';
     sheet('Monthly', [['Month', 'Income' + cur, 'Spending' + cur, 'Left' + cur]].concat(rd.months.map((m) => [m.full, m.income, m.spent, m.net])),
       { money: [1, 2, 3], widths: [20, 16, 16, 16] });
-    sheet('Categories', [['Category', 'Entries', 'Amount' + cur, 'Share']].concat(rd.cats.map((c) => [c.name, c.count, c.total, rd.spent ? c.total / rd.spent : 0])),
-      { money: [2], pct: [3], widths: [22, 10, 16, 10] });
-    sheet('Expenses', [['Date', 'Description', 'Category', 'Amount' + cur, 'Note']].concat(rd.exp.map((e) => [serial(e.date), e.title, e.category, e.amount, e.note || ''])),
-      { dates: [0], money: [3], widths: [13, 30, 16, 16, 36], filter: true });
+    const catRows = [['Category', 'Sub-category', 'Entries', 'Amount' + cur, 'Share']];
+    rd.cats.forEach(function (c) {
+      catRows.push([c.name, c.subList.length ? 'All' : '', c.count, c.total, rd.spent ? c.total / rd.spent : 0]);
+      c.subList.forEach((s) => catRows.push([c.name, s.name, s.count, s.total, rd.spent ? s.total / rd.spent : 0]));
+    });
+    sheet('Categories', catRows, { money: [3], pct: [4], widths: [20, 20, 10, 16, 10], filter: true });
+    sheet('Expenses', [['Date', 'Description', 'Category', 'Sub-category', 'Amount' + cur, 'Note']].concat(rd.exp.map((e) => [serial(e.date), e.title, e.category, subOf(e), e.amount, e.note || ''])),
+      { dates: [0], money: [4], widths: [13, 30, 16, 18, 16, 36], filter: true });
     sheet('Income', [['Date', 'Source', 'How often', 'Amount' + cur, 'Counted in period' + cur]].concat(rd.incRows.map((x) => [serial(x.i.date), x.i.title, FREQ_TITLE[x.i.frequency] || x.i.frequency, x.i.amount, x.counted])),
       { dates: [0], money: [3, 4], widths: [13, 26, 12, 16, 24], filter: true });
     sheet('Budgets', [['Budget', 'Period', 'Current period', 'Limit' + cur, 'Spent' + cur, 'Left' + cur, 'Used']].concat(rd.budgets.map((x) => [
-      x.b.category === 'All' ? 'All spending' : x.b.category, PERIOD_TITLE[x.b.period] || x.b.period, rangeLabel(x.b.period, x.s.r), x.b.amount, x.s.spent, x.s.left, x.s.ratio])),
+      x.b.category === 'All' ? 'All spending' : catPath(x.b, ' / '), PERIOD_TITLE[x.b.period] || x.b.period, rangeLabel(x.b.period, x.s.r), x.b.amount, x.s.spent, x.s.left, x.s.ratio])),
       { money: [3, 4, 5], pct: [6], widths: [18, 11, 26, 14, 14, 14, 8] });
     const out = X.write(wb, { bookType: 'xlsx', type: 'array', compression: true });
     return new Blob([out], { type: MIME.xlsx });
@@ -1598,8 +1710,8 @@ input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); ou
         const blob = kind === 'pdf' ? buildPDF(rd) : buildXLSX(rd);
         await saveFile('cashbook-report-' + fileStamp(r) + '.' + kind, blob);
       } else if (kind === 'csv-exp') {
-        const rows = [['Date', 'Description', 'Category', 'Amount (' + currency + ')', 'Note']];
-        listKind('expense').filter((e) => inR(e.date, r)).sort(byDateDesc).forEach((e) => rows.push([e.date, e.title, e.category, e.amount, e.note || '']));
+        const rows = [['Date', 'Description', 'Category', 'Sub-category', 'Amount (' + currency + ')', 'Note']];
+        listKind('expense').filter((e) => inR(e.date, r)).sort(byDateDesc).forEach((e) => rows.push([e.date, e.title, e.category, subOf(e), e.amount, e.note || '']));
         await saveFile('cashbook-expenses-' + fileStamp(r) + '.csv', toCSV(rows));
       } else if (kind === 'csv-inc') {
         const rows = [['Date', 'Source', 'Frequency', 'Amount (' + currency + ')', 'Counted in period (' + currency + ')']];
@@ -1670,52 +1782,131 @@ input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); ou
     const monthExp = exp.filter((e) => inR(e.date, mr));
     const spent = sum(monthExp);
     const left = monthIncome - spent;
+    const mb = monthBudget(bud, mr);
+    const notSet = (t) => h('span', { class: 'na' }, t);
 
     wrap.append(h('section', { class: 'card statement', 'aria-label': 'This month' },
       h('div', { class: 'eyebrow' }, 'This month · ' + rangeLabel('monthly', mr)),
       h('dl', null,
         line('Income', 'monthly equivalent', money(monthIncome), 'pos'),
+        line('Budget', mb ? mb.note : null, mb ? money(mb.amount) : notSet('Not set'), ''),
         line('Spent', null, money(spent), ''),
-        line('Left', null, money(left), left < 0 ? 'neg' : '', true))));
+        line('Left from income', 'income − spent', money(left), left < 0 ? 'neg' : '', true),
+        mb ? h('div', { class: 'line total sub-total' }, h('dt', null, 'Left in budget', h('small', null, 'budget − spent')),
+          h('dd', { class: 'num ' + (mb.amount - spent < 0 ? 'neg' : '') }, mb.amount - spent < 0 ? 'Over by ' + money(spent - mb.amount) : money(mb.amount - spent))) : null)));
+
+    wrap.append(categoryTree(exp, bud, mr));
 
     const pace = paceCard(inc, exp, bud, monthIncome);
     if (pace) wrap.append(pace);
-
-    const bsec = h('section', null,
-      h('div', { class: 'section-head' }, h('h2', null, 'Budgets'),
-        h('button', { type: 'button', class: 'btn small', onclick: function () { go('budgets'); } }, 'Manage budgets')));
-    if (!bud.length) {
-      bsec.append(h('div', { class: 'card empty' },
-        h('p', null, 'A budget is a limit for a day, week, month, quarter or year. Your expenses are compared against it.'),
-        h('button', { type: 'button', class: 'btn primary', onclick: function () { openEditor('budget'); } }, 'Set a budget')));
-    } else {
-      const sorted = bud.slice().sort((a, b) => budgetStats(b, exp).ratio - budgetStats(a, exp).ratio);
-      bsec.append(h('div', { class: 'grid' }, sorted.map((b) => budgetCard(b, exp))));
-    }
-    wrap.append(bsec);
     wrap.append(trendsSection(inc, exp, bud));
-
-    const by = new Map();
-    monthExp.forEach(function (e) {
-      const k = (e.category || 'Other').toLowerCase();
-      const cur = by.get(k) || { name: e.category || 'Other', total: 0 };
-      cur.total += e.amount; by.set(k, cur);
-    });
-    const rows = Array.from(by.values()).sort((a, b) => b.total - a.total);
-    const csec = h('section', null, h('div', { class: 'section-head' }, h('h2', null, 'Where it went')));
-    if (!rows.length) {
-      csec.append(h('div', { class: 'card empty' }, h('p', null, 'No expenses recorded this month yet.'),
-        h('button', { type: 'button', class: 'btn primary', onclick: function () { openEditor('expense'); } }, 'Add an expense')));
-    } else {
-      const max = rows[0].total;
-      csec.append(h('div', { class: 'card' }, h('ul', { class: 'cats' }, rows.map(function (r) {
-        return h('li', null,
-          h('div', { class: 'cat-top' }, h('span', null, r.name), h('span', { class: 'num' }, money(r.total) + ' · ' + Math.round(r.total / spent * 100) + '%')),
-          h('div', { class: 'bar', 'aria-hidden': 'true' }, h('i', { style: { width: Math.max(2, r.total / max * 100) + '%' } })));
-      }))));
-    }
-    wrap.append(csec);
     return wrap;
+  }
+
+  /* ---------- category tree: category > sub-category > expenses ---------- */
+  function categoryTree(exp, bud, mr) {
+    const monthExp = exp.filter((e) => inR(e.date, mr)).sort(byDateDesc);
+    const catBud = bud.filter((b) => b.category !== 'All');
+    const cats = new Map();
+    const node = (k, name) => cats.get(k) || (cats.set(k, { name: name, spent: 0, exp: [], buds: [], subs: new Map() }), cats.get(k));
+    const subNode = (c, name) => { const k = low(name); return c.subs.get(k) || (c.subs.set(k, { name: name, spent: 0, exp: [], buds: [] }), c.subs.get(k)); };
+    monthExp.forEach(function (e) {
+      const c = node(low(e.category || 'Other'), e.category || 'Other');
+      c.spent += e.amount;
+      if (subOf(e)) { const s = subNode(c, subOf(e)); s.spent += e.amount; s.exp.push(e); } else c.exp.push(e);
+    });
+    catBud.forEach(function (b) {
+      const c = node(low(b.category), b.category);
+      c.buds.push(b);
+      if (subOf(b)) subNode(c, subOf(b)).buds.push(b);
+    });
+    const list = Array.from(cats.values()).map(function (c) {
+      c.budget = c.buds.length ? catBudgetAmount(c.buds, mr) : null;
+      c.subs.forEach(function (s) { s.budget = s.buds.length ? s.buds.reduce((t, b) => t + perMonth(b, mr), 0) : null; });
+      return c;
+    }).sort((a, b) => (b.spent - a.spent) || ((b.budget || 0) - (a.budget || 0)) || a.name.localeCompare(b.name));
+
+    const sec = h('section', null);
+    const allKeys = [];
+    list.forEach(function (c) {
+      allKeys.push('c:' + low(c.name));
+      c.subs.forEach(function (s) { allKeys.push('s:' + low(c.name) + '/' + low(s.name)); });
+      if (c.subs.size && c.exp.length) allKeys.push('s:' + low(c.name) + '/~');
+    });
+    const allOpen = allKeys.length && allKeys.every((k) => ui.treeOpen.has(k));
+    sec.append(h('div', { class: 'section-head' }, h('h2', null, 'By category'),
+      h('div', { class: 'btn-row' },
+        list.length ? h('button', { type: 'button', class: 'btn small', onclick: function () {
+          if (allOpen) ui.treeOpen.clear(); else allKeys.forEach((k) => ui.treeOpen.add(k));
+          renderMain();
+        } }, allOpen ? 'Collapse all' : 'Expand all') : null,
+        h('button', { type: 'button', class: 'btn small', onclick: function () { go('budgets'); } }, 'Manage budgets'))));
+
+    if (!list.length) {
+      sec.append(h('div', { class: 'card empty' }, h('p', null, 'No expenses or budgets this month yet.'),
+        h('div', { class: 'btn-row' },
+          h('button', { type: 'button', class: 'btn primary', onclick: function () { openEditor('expense'); } }, 'Add an expense'),
+          h('button', { type: 'button', class: 'btn', onclick: function () { openEditor('budget'); } }, 'Set a budget'))));
+      return sec;
+    }
+
+    const caret = () => h('span', { class: 'caret', 'aria-hidden': 'true' }, S('svg', { width: 12, height: 12, viewBox: '0 0 12 12' }, S('path', { d: 'M4 2l4 4-4 4', fill: 'none', stroke: 'currentColor', 'stroke-width': 2, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })));
+    const budText = (b) => money(b.amount) + ' ' + (PERIOD_TITLE[b.period] || b.period).toLowerCase();
+
+    function row(n, meta, leafCount) {
+      const ratio = n.budget ? n.spent / n.budget : 0;
+      const st = n.budget ? (ratio >= 1 ? ' over' : ratio >= 0.8 ? ' warn' : '') : '';
+      const leftV = n.budget != null ? n.budget - n.spent : null;
+      return h('div', { class: 't-row' },
+        h('span', { class: 't-name' },
+          h('span', { class: 't-title' }, caret(), h('span', null, n.name)),
+          meta ? h('span', { class: 't-meta' }, meta) : null,
+          n.budget ? h('span', { class: 't-bar' + st, role: 'progressbar', 'aria-label': n.name + ' budget used', 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(Math.min(100, Math.round(ratio * 100))) },
+            h('i', { style: { width: Math.min(100, Math.max(2, ratio * 100)) + '%' } })) : null),
+        h('span', { class: 'num c-budget' }, n.budget != null ? money(n.budget) : h('span', { class: 't-none' }, '–')),
+        h('span', { class: 'num' }, money(n.spent)),
+        h('span', { class: 'num ' + (leftV != null && leftV < 0 ? 'neg' : '') }, leftV == null ? h('span', { class: 't-none' }, '–') : money(leftV)));
+    }
+    function leaf(e) {
+      return h('button', { type: 'button', class: 't-leaf', onclick: function () { openEditor('expense', e.id); } },
+        h('span', null, h('span', { class: 'when' }, parseISO(e.date).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })), e.title, e.note ? h('span', { class: 'muted' }, ' · ' + e.note) : null),
+        h('span', { class: 'c-budget' }), h('span', { class: 'num' }, money(e.amount)), h('span'));
+    }
+    function emptyLeaf() { return h('div', { class: 't-leaf', style: { cursor: 'default' } }, h('span', { class: 'muted' }, 'No expenses this month')); }
+    function det(key, cls, summaryRow, kids) {
+      const d = h('details', { class: cls, open: ui.treeOpen.has(key) }, h('summary', null, summaryRow), kids);
+      d.addEventListener('toggle', function () { if (d.open) ui.treeOpen.add(key); else ui.treeOpen.delete(key); });
+      return d;
+    }
+
+    const box = h('div', { class: 'card tree', role: 'group', 'aria-label': 'Budget and spending by category this month' },
+      h('div', { class: 'tree-head', 'aria-hidden': 'true' }, h('span', null, 'Category'), h('span', { class: 'c-budget' }, 'Budget'), h('span', null, 'Spent'), h('span', null, 'Left')));
+    list.forEach(function (c) {
+      const own = c.buds.filter((b) => !subOf(b));
+      const nExp = c.exp.length + Array.from(c.subs.values()).reduce((t, s) => t + s.exp.length, 0);
+      const metaBits = [];
+      if (own.length) metaBits.push('Budget ' + own.map(budText).join(' + '));
+      else if (c.buds.length) metaBits.push('Budget = sum of sub-categories');
+      metaBits.push(nExp + (nExp === 1 ? ' expense' : ' expenses'));
+      if (c.subs.size) metaBits.push(c.subs.size + (c.subs.size === 1 ? ' sub-category' : ' sub-categories'));
+      const kids = [];
+      Array.from(c.subs.values()).sort((a, b) => (b.spent - a.spent) || a.name.localeCompare(b.name)).forEach(function (s) {
+        const sm = [];
+        if (s.buds.length) sm.push('Budget ' + s.buds.map(budText).join(' + '));
+        sm.push(s.exp.length + (s.exp.length === 1 ? ' expense' : ' expenses'));
+        kids.push(det('s:' + low(c.name) + '/' + low(s.name), 't-sub', row(s, sm.join(' · ')),
+          s.exp.length ? s.exp.map(leaf) : emptyLeaf()));
+      });
+      if (c.exp.length && c.subs.size) {
+        const rest = { name: 'Other ' + c.name.toLowerCase(), spent: sum(c.exp), budget: null };
+        kids.push(det('s:' + low(c.name) + '/~', 't-sub', row(rest, 'No sub-category'), c.exp.map(leaf)));
+      } else { c.exp.forEach((e) => kids.push(leaf(e))); }
+      if (!kids.length) kids.push(emptyLeaf());
+      box.append(det('c:' + low(c.name), 't-cat', row(c, metaBits.join(' · ')), kids));
+    });
+    sec.append(box);
+    sec.append(h('p', { class: 'hint', style: { marginTop: '8px' } }, 'Budgets are shown per month: weekly, daily, quarterly and yearly limits are converted. Tap a category to open it, and an expense to edit it.'));
+    return sec;
   }
 
   function onboarding() {
@@ -1779,7 +1970,7 @@ input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); ou
           box.append(h('button', { type: 'button', class: 'row', onclick: function () { openEditor('expense', e.id); } },
             h('span', { class: 'r-main' },
               h('span', { class: 'r-title' }, e.title, e.example ? h('span', { class: 'chip' }, 'Example') : null),
-              h('span', { class: 'r-meta' }, [e.category, e.note].filter(Boolean).join(' · '))),
+              h('span', { class: 'r-meta' }, [catPath(e), e.note].filter(Boolean).join(' · '))),
             h('span', { class: 'num r-amt' }, money(e.amount))));
         });
       });
@@ -1824,8 +2015,22 @@ input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); ou
         h('p', null, 'Set a daily, weekly, monthly, quarterly or yearly limit, for one category or for all spending.'),
         h('button', { type: 'button', class: 'btn primary', onclick: function () { openEditor('budget'); } }, 'Add budget')));
     } else {
-      sec.append(h('p', { class: 'hint' }, 'Each budget counts the expenses recorded in its current period. Select one to change it.'));
-      sec.append(h('div', { class: 'grid' }, bud.sort((a, b) => budgetStats(b, exp).ratio - budgetStats(a, exp).ratio).map((b) => budgetCard(b, exp))));
+      sec.append(h('p', { class: 'hint' }, 'Grouped by category. Each budget counts the expenses recorded in its current period. Select one to change it.'));
+      const mr = periodRange('monthly', new Date());
+      const monthExp = exp.filter((e) => inR(e.date, mr));
+      const groups = new Map();
+      bud.forEach(function (b) { const k = b.category === 'All' ? '' : low(b.category); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(b); });
+      const keys = Array.from(groups.keys()).sort((a, b) => (a === '' ? -1 : b === '' ? 1 : a.localeCompare(b)));
+      keys.forEach(function (k) {
+        const list = groups.get(k).sort((a, b) => (subOf(a) ? 1 : 0) - (subOf(b) ? 1 : 0) || subOf(a).localeCompare(subOf(b)) || budgetStats(b, exp).ratio - budgetStats(a, exp).ratio);
+        const title = k === '' ? 'All spending' : list[0].category;
+        const spentM = k === '' ? sum(monthExp) : sum(monthExp.filter((e) => low(e.category) === k));
+        const budM = k === '' ? perMonth(list.find((x) => x.period === 'monthly') || list[0], mr) : catBudgetAmount(list, mr);
+        sec.append(h('div', { class: 'cat-group' },
+          h('div', { class: 'cat-group-head' }, h('h3', null, title),
+            h('span', { class: 'muted num' }, 'This month: ' + money(spentM) + ' of ' + money(budM))),
+          h('div', { class: 'grid' }, list.map((b) => budgetCard(b, exp)))));
+      });
     }
     return h('div', { class: 'stack' }, sec);
   }
@@ -1900,6 +2105,26 @@ input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); ou
     return h('div', { class: 'field' }, h('label', { for: id }, label), control, hint ? h('div', { class: 'hint', style: { margin: '0' } }, hint) : null, h('div', { class: 'err', id: id + '-err', role: 'alert' }));
   }
 
+  // optional sub-category input with suggestions from the chosen category
+  function subField(getCat, value) {
+    const dl = h('datalist', { id: 'f-sub-list' });
+    const input = h('input', { id: 'f-sub', type: 'text', list: 'f-sub-list', autocomplete: 'off', maxlength: '40', value: value || '', placeholder: 'Optional, e.g. Groceries' });
+    const fill = function () {
+      const c = getCat();
+      dl.replaceChildren.apply(dl, (c && c !== 'All' && c !== NEW_CAT ? subcategories(c) : []).map((x) => h('option', { value: x })));
+    };
+    fill();
+    const wrap = h('div', { class: 'field' }, h('label', { for: 'f-sub' }, 'Sub-category'), input, dl,
+      h('div', { class: 'hint', style: { margin: '0' } }, 'Groups entries inside the category, e.g. Food \u203A Groceries or Food \u203A Restaurants.'));
+    return { input: input, el: wrap, refresh: fill };
+  }
+  // reuse the existing spelling of a sub-category ("groceries" -> "Groceries")
+  function canonSub(cat, v) {
+    const t = String(v || '').trim().replace(/\s+/g, ' ');
+    if (!t) return '';
+    return subcategories(cat).find((x) => low(x) === low(t)) || t;
+  }
+
   const EDITORS = {
     expense: function (ex) {
       const e = ex || {};
@@ -1910,14 +2135,15 @@ input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); ou
       const date = h('input', { id: 'f-date', type: 'date', value: e.date || todayISO() });
       const cat = selectEl('f-category', cats.map((c) => [c, c]).concat([[NEW_CAT, 'New category…']]), startCat);
       const newCat = h('input', { id: 'f-newcat', type: 'text', autocomplete: 'off', maxlength: '40', placeholder: 'Category name', hidden: true });
-      cat.addEventListener('change', function () { newCat.hidden = cat.value !== NEW_CAT; if (cat.value === NEW_CAT) newCat.focus(); });
+      const sub = subField(function () { return cat.value; }, subOf(e));
+      cat.addEventListener('change', function () { newCat.hidden = cat.value !== NEW_CAT; if (cat.value === NEW_CAT) newCat.focus(); sub.refresh(); });
       const note = h('input', { id: 'f-note', type: 'text', autocomplete: 'off', maxlength: '200', value: e.note || '', placeholder: 'Optional' });
       const catField = h('div', { class: 'field' }, h('label', { for: 'f-category' }, 'Category'), cat, newCat, h('div', { class: 'err', id: 'f-category-err', role: 'alert' }));
       return {
         title: ex ? 'Edit expense' : 'New expense',
         focus: title,
-        fields: [field('f-title', 'What was it for?', title), field('f-amount', 'Amount (' + currency + ')', amount), field('f-date', 'Date', date), catField, field('f-note', 'Note', note)],
-        read: function () { return { title: title.value.trim(), amount: amount.value.trim(), date: date.value, category: cat.value === NEW_CAT ? newCat.value.trim() : cat.value, note: note.value.trim() }; },
+        fields: [field('f-title', 'What was it for?', title), field('f-amount', 'Amount (' + currency + ')', amount), field('f-date', 'Date', date), catField, sub.el, field('f-note', 'Note', note)],
+        read: function () { return { title: title.value.trim(), amount: amount.value.trim(), date: date.value, category: cat.value === NEW_CAT ? newCat.value.trim() : cat.value, sub: sub.input.value.trim(), note: note.value.trim() }; },
         validate: function (v) {
           const er = {};
           if (!(parseAmount(v.amount) > 0)) er['f-amount'] = 'Enter an amount greater than zero.';
@@ -1926,7 +2152,8 @@ input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); ou
           return Object.keys(er).length ? er : null;
         },
         toDoc: function (v, old) {
-          return Object.assign({}, old || {}, { kind: 'expense', title: v.title || v.category, amount: parseAmount(v.amount), date: v.date, category: v.category, note: v.note, created: (old && old.created) || Date.now() });
+          const sb = canonSub(v.category, v.sub);
+          return Object.assign({}, old || {}, { kind: 'expense', title: v.title || sb || v.category, amount: parseAmount(v.amount), date: v.date, category: v.category, sub: sb, note: v.note, created: (old && old.created) || Date.now() });
         },
         another: true
       };
@@ -1964,15 +2191,18 @@ input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); ou
       const cat = selectEl('f-category', [['All', 'All spending']].concat(categories().map((c) => [c, c])), e.category || 'All');
       const period = selectEl('f-period', PERIODS, e.period || 'monthly');
       const amount = h('input', { id: 'f-amount', type: 'text', inputmode: 'decimal', autocomplete: 'off', value: e.amount != null ? String(e.amount) : '', placeholder: '0' });
+      const sub = subField(function () { return cat.value; }, subOf(e));
+      const showSub = function () { sub.el.hidden = cat.value === 'All'; sub.refresh(); };
+      cat.addEventListener('change', showSub); showSub();
       return {
         title: ex ? 'Edit budget' : 'New budget',
         focus: amount,
-        fields: [field('f-category', 'Applies to', cat), field('f-period', 'Period', period), field('f-amount', 'Limit per period (' + currency + ')', amount),
-          h('p', { class: 'hint' }, 'Expenses recorded in the current period count against this limit.')],
-        read: function () { return { category: cat.value, period: period.value, amount: amount.value.trim() }; },
+        fields: [field('f-category', 'Applies to', cat), sub.el, field('f-period', 'Period', period), field('f-amount', 'Limit per period (' + currency + ')', amount),
+          h('p', { class: 'hint' }, 'Expenses recorded in the current period count against this limit. Leave the sub-category empty to budget the whole category.')],
+        read: function () { return { category: cat.value, sub: cat.value === 'All' ? '' : sub.input.value.trim(), period: period.value, amount: amount.value.trim() }; },
         validate: function (v) { return parseAmount(v.amount) > 0 ? null : { 'f-amount': 'Enter a limit greater than zero.' }; },
         toDoc: function (v, old) {
-          return Object.assign({}, old || {}, { kind: 'budget', category: v.category, period: v.period, amount: parseAmount(v.amount), created: (old && old.created) || Date.now() });
+          return Object.assign({}, old || {}, { kind: 'budget', category: v.category, sub: canonSub(v.category, v.sub), period: v.period, amount: parseAmount(v.amount), created: (old && old.created) || Date.now() });
         }
       };
     }
@@ -2130,6 +2360,7 @@ input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); ou
     if (!/^[A-Za-z0-9_.~:@+-]{1,100}$/.test(id) || !d || typeof d !== 'object') return false;
     if (d.kind === 'settings') return typeof d.currency === 'string' && /^[A-Z]{3}$/.test(d.currency);
     if (!(typeof d.amount === 'number' && isFinite(d.amount) && d.amount > 0)) return false;
+    if (d.sub != null && (typeof d.sub !== 'string' || d.sub.length > 60)) return false;
     if (d.kind === 'expense') return isISO(d.date) && typeof d.category === 'string';
     if (d.kind === 'income') return isISO(d.date) && !!FREQ_FACTOR[d.frequency];
     if (d.kind === 'budget') return typeof d.category === 'string' && PERIOD_TITLE[d.period] !== undefined;
